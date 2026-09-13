@@ -2,9 +2,67 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { VitePWA } from "vite-plugin-pwa";
+
+// GitHub Pages serves the app from /SIH/, so the base must match.
+// Pages builds set GITHUB_PAGES=true; local builds/dev stay root-relative.
+const isPages = process.env.GITHUB_PAGES === "true";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  base: isPages ? "/SIH/" : "/",
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: "prompt",
+      includeAssets: ["favicon.svg"],
+      manifest: {
+        name: "SkillSetu — PM-AJAY GIA Skilling Voice Assistant",
+        short_name: "SkillSetu",
+        description:
+          "AI voice assistant for livelihood mapping and NSQF-aligned skilling recommendations for SC communities under the GIA component of PM-AJAY",
+        lang: "en-IN",
+        dir: "ltr",
+        start_url: ".",
+        scope: ".",
+        display: "standalone",
+        orientation: "portrait-primary",
+        theme_color: "#2b4dc4",
+        background_color: "#ffffff",
+        categories: ["education", "government", "productivity"],
+        icons: [
+          { src: "icons/icon-192.png", sizes: "192x192", type: "image/png" },
+          { src: "icons/icon-512.png", sizes: "512x512", type: "image/png" },
+          {
+            src: "icons/icon-512-maskable.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
+        navigateFallback: "index.html",
+        navigateFallbackDenylist: [/^\/SIH\//],
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        runtimeCaching: [
+          {
+            // Google Fonts: cache-first for stylesheets and font files
+            urlPattern: ({ url }) =>
+              url.origin === "https://fonts.googleapis.com" ||
+              url.origin === "https://fonts.gstatic.com",
+            handler: "CacheFirst",
+            options: {
+              cacheName: "google-fonts",
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 365 },
+            },
+          },
+        ],
+      },
+      devOptions: { enabled: false },
+    }),
+  ],
   server: { port: 5173, host: true },
   test: {
     environment: "node",

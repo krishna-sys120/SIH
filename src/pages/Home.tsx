@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import type { Nav } from "../App";
 import { useI18n } from "../i18n/context";
 import { LANGUAGES } from "../i18n/languages";
+import { useInstallPrompt } from "../pwa/useInstallPrompt";
 import { fetchCourses, fetchBeneficiaries, usingSupabase } from "../data/store";
 import type { Beneficiary, Course } from "../data/model";
 
 export default function Home({ nav }: { nav: Nav }) {
   const { t } = useI18n();
+  const { canInstall, installed, install } = useInstallPrompt();
   const [stats, setStats] = useState({ ben: 0, courses: 0, matches: 0 });
 
   useEffect(() => {
@@ -46,7 +48,18 @@ export default function Home({ nav }: { nav: Nav }) {
               >
                 {t("home.hero.ctaRegister")}
               </button>
+              {canInstall && (
+                <button
+                  onClick={() => void install()}
+                  className="px-6 py-3 rounded-xl bg-indigoink-600 hover:bg-indigoink-700 text-white font-semibold shadow-lg shadow-indigoink-600/25 transition-all active:scale-95"
+                >
+                  ⬇️ {t("install.action")}
+                </button>
+              )}
             </div>
+            {installed && (
+              <p className="mt-3 text-sm text-slate-500">✅ {t("install.done")}</p>
+            )}
           </div>
 
           {/* Decorative voice orb */}
