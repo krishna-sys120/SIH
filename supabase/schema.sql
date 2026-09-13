@@ -185,3 +185,90 @@ on conflict (id) do nothing;
 create index if not exists idx_beneficiaries_state on public.beneficiaries (state);
 create index if not exists idx_enrollments_beneficiary on public.enrollments (beneficiary_id);
 create index if not exists idx_courses_sector on public.courses (sector);
+
+-- ============================================================
+-- 7. Twilio communications (SMS / WhatsApp / Voice / IVR)
+--    Written ONLY by the twilio-send / twilio-webhook edge functions via the
+--    service-role key; browsers access the PII-free comm_overview view.
+-- ============================================================
+
+-- Unified record for every outbound or inbound message and call.
+create table if not exists public.communications (
+  id              uuid primary key default gen_random_uuid(),
+  channel         text not null check (channel in ('sms','whatsapp','voice')),
+  direction       text not null check (direction in ('inbound','outbound')),
+  status          text not null default 'queued' check (status in
+                    ('queued','sent','delivered','failed','undelivered','initiated','ringing','in-progress','completed','busy','no-answer','canceled')),
+  twilio_sid      text unique,
+  beneficiary_id  uuid references public.beneficiaries(id) on delete set null,
+  phone           text not null,               -- E.164; masked in the overview view
+  body            text,                        -- message text / call note; NOT in the view
+  duration_secs   integer,
+  error_code      integer,
+  error_message   text,
+  meta            jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+-- One row per voice call, tracking IVR menu selections.
+create table if not exists public.ivr_sessions (
+  id              uuid primary key default gen_random_uuid(),
+  call_sid        text not null unique,
+  beneficiary_id  uuid references public.beneficiaries(id) on delete set null,
+  phone           text not null,
+  selections      jsonb not null default '[]'::jsonb,  -- [{"key":"1","menu":"main","at":"..."}]
+  status          text not null default 'in-progress',
+  language        text,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+-- Opt-in/opt-out registry per phone + channel (STOP/START handling).
+create table if not exists public.comm_optouts (
+  phone           text not null,
+  channel         text not null check (channel in ('sms','whatsapp','voice','all')),
+  opted_out       boolean not null default true,
+  source          text,
+  updated_at      timestamptz not null default now(),
+  primary key (phone, channel)
+);
+
+-- Webhook idempotency: (sid + event) seen before -> skip reprocessing.
+create table if not exists public.webhook_events (
+  event_id        text primary key,            -- e.g. "SMxxxx:delivered"
+  kind            text not null,
+  payload         jsonb not null default '{}'::jsonb,
+  received_at     timestamptz not null default now()
+);
+
+-- PII-free dashboard view: masked phones, no message bodies, no uuids.
+create or replace view public.comm_overview as
+select
+  c.channel,
+  c.direction,
+  c.status,
+  '•••••' || right(c.phone, 4)   as phone_masked,
+  c.duration_secs,
+  c.error_code,
+  date_trunc('minute', c.created_at) as created_at,
+  (c.meta ->> 'ivr_keys')        as ivr_keys
+from public.communications c;
+
+grant select on public.comm_overview to anon, authenticated;
+
+-- Deny-by-default on the raw tables: no anon/authenticated policies at all —
+-- only the service role (edge functions) reads and writes these.
+alter table public.communications enable row level security;
+alter table public.ivr_sessions    enable row level security;
+alter table public.comm_optouts    enable row level security;
+alter table public.webhook_events  enable row level security;
+
+-- Query/index coverage for the dashboard and webhook hot paths.
+create index if not exists idx_comms_sid        on public.communications (twilio_sid);
+create index if not exists idx_comms_beneficiary on public.communications (beneficiary_id);
+create index if not exists idx_comms_phone      on public.communications (phone);
+create index if not exists idx_comms_status     on public.communications (status);
+create index if not exists idx_comms_created    on public.communications (created_at);
+create index if not exists idx_ivr_beneficiary  on public.ivr_sessions (beneficiary_id);
+create index if not exists idx_optouts_phone    on public.comm_optouts (phone);

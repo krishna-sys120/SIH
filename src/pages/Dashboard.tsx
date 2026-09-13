@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n/context";
 import { fetchBeneficiaries, fetchCourses, usingSupabase } from "../data/store";
+import { useComms, type CommRow } from "../data/comms";
 import type { Beneficiary, Course } from "../data/model";
 
 interface EnrollRow {
@@ -9,12 +10,13 @@ interface EnrollRow {
 }
 
 export default function Dashboard() {
-  const { t, tl } = useI18n();
+  const { t, tl, lang } = useI18n();
   const [bens, setBens] = useState<Beneficiary[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [enrolls, setEnrolls] = useState<EnrollRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(false);
+  const comms = useComms();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,6 +79,40 @@ export default function Dashboard() {
     a.download = "beneficiaries.csv";
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  const commStats = useMemo(() => {
+    const msgs = comms.rows.filter((r) => r.channel !== "voice");
+    const calls = comms.rows.filter((r) => r.channel === "voice");
+    return {
+      total: msgs.length,
+      delivered: msgs.filter((r) => r.status === "delivered").length,
+      failed: msgs.filter((r) => r.status === "failed" || r.status === "undelivered").length,
+      calls: calls.length,
+      ivr: calls.filter((r) => (r.ivr_keys ?? "").length > 0).length,
+    };
+  }, [comms.rows]);
+
+  function commChannelLabel(c: CommRow["channel"]): string {
+    if (c === "sms") return "SMS";
+    if (c === "whatsapp") return "WhatsApp";
+    return t("comm.channel.voice");
+  }
+
+  function fmtWhen(iso: string): string {
+    try {
+      return new Date(iso).toLocaleString(lang === "en" ? "en-IN" : lang, {
+        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  }
+
+  function statusColor(s: string): string {
+    if (s === "delivered" || s === "completed" || s === "received") return "bg-leaf-500/10 text-leaf-600";
+    if (s === "failed" || s === "undelivered") return "bg-rose-50 text-rose-600";
+    return "bg-amber-100 text-amber-700";
   }
 
   return (
@@ -189,6 +225,69 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Communications (SMS / WhatsApp / Voice / IVR) */}
+          <div className="mt-6 bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-slate-900">{t("comm.title")}</h3>
+                <p className="text-sm text-slate-500">{t("comm.subtitle")}</p>
+              </div>
+              <span className="text-2xl" aria-hidden>📞</span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+              {[
+                { n: commStats.total, label: t("comm.stat.total") },
+                { n: commStats.delivered, label: t("comm.stat.delivered") },
+                { n: commStats.failed, label: t("comm.stat.failed") },
+                { n: commStats.calls, label: t("comm.stat.calls") },
+                { n: commStats.ivr, label: t("comm.stat.ivr") },
+              ].map((s, i) => (
+                <div key={i} className="rounded-xl bg-slate-50 px-4 py-3">
+                  <div className="text-2xl font-extrabold text-slate-900 tabular-nums">{s.n}</div>
+                  <div className="text-xs text-slate-500">{s.label}</div>
+                </div>
+              ))}
+            </div>
+            {comms.loading ? (
+              <div className="mt-4 h-24 rounded-xl bg-slate-100 animate-pulse" />
+            ) : comms.error ? (
+              <p className="mt-4 text-sm text-rose-600">{t("common.error")}</p>
+            ) : comms.rows.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">{t("comm.empty")}</p>
+            ) : (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 text-left text-slate-500 text-xs uppercase tracking-wide">
+                      <th className="px-3 py-2 font-semibold">{t("comm.table.channel")}</th>
+                      <th className="px-3 py-2 font-semibold">{t("comm.table.direction")}</th>
+                      <th className="px-3 py-2 font-semibold">{t("comm.table.phone")}</th>
+                      <th className="px-3 py-2 font-semibold">{t("comm.table.status")}</th>
+                      <th className="px-3 py-2 font-semibold">{t("comm.table.keys")}</th>
+                      <th className="px-3 py-2 font-semibold">{t("comm.table.when")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comms.rows.slice(0, 10).map((r, i) => (
+                      <tr key={i} className="border-t border-slate-100 hover:bg-slate-50/60">
+                        <td className="px-3 py-2 font-medium text-slate-700">{commChannelLabel(r.channel)}</td>
+                        <td className="px-3 py-2 text-slate-600">{r.direction === "inbound" ? t("comm.dir.inbound") : t("comm.dir.outbound")}</td>
+                        <td className="px-3 py-2 text-slate-600 tabular-nums">{r.phone_masked}</td>
+                        <td className="px-3 py-2">
+                          <span className={`text-xs font-semibold rounded-full px-2.5 py-1 ${statusColor(r.status)}`}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-slate-600 tabular-nums">{r.ivr_keys ?? "—"}</td>
+                        <td className="px-3 py-2 text-slate-500">{fmtWhen(r.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {/* Table */}
