@@ -6,9 +6,10 @@ import AssistantPage from "./pages/Assistant";
 import CoursesPage from "./pages/Courses";
 import RegisterPage from "./pages/Register";
 import DashboardPage from "./pages/Dashboard";
+import IvrCallPage from "./pages/IvrCall";
 import { isTtsSupported } from "./voice/speech";
 
-export type Page = "home" | "assistant" | "courses" | "register" | "dashboard";
+export type Page = "home" | "assistant" | "courses" | "register" | "dashboard" | "ivr";
 
 export interface Nav {
   page: Page;
@@ -27,6 +28,7 @@ export default function App() {
     { id: "courses", label: t("nav.courses"), icon: "📚" },
     { id: "register", label: t("nav.register"), icon: "📝" },
     { id: "dashboard", label: t("nav.dashboard"), icon: "📊" },
+    { id: "ivr", label: t("ivr.title"), icon: "📞" },
   ];
 
   return (
@@ -97,6 +99,7 @@ export default function App() {
         {page === "courses" && <CoursesPage nav={nav} />}
         {page === "register" && <RegisterPage nav={nav} />}
         {page === "dashboard" && <DashboardPage />}
+        {page === "ivr" && <IvrCallPage />}
       </main>
 
       {/* Footer */}

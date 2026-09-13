@@ -26,6 +26,17 @@ export function readDemoComms(): CommRow[] {
   }
 }
 
+/** Append one record to the demo comms store (used by the IVR call simulator). */
+export function appendDemoComm(row: CommRow): void {
+  const list = readDemoComms();
+  list.unshift(row);
+  try {
+    localStorage.setItem(DEMO_KEY, JSON.stringify(list.slice(0, 200)));
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Seed a few demo records so the dashboard section isn't empty in demo mode. */
 export function seedDemoCommsIfEmpty(): void {
   if (readDemoComms().length > 0) return;
