@@ -62,13 +62,31 @@ src/
 │   └── demo.ts           # localStorage store for demo mode
 ├── i18n/
 │   ├── languages.ts      # 7 languages with BCP-47 voice tags
-│   ├── strings.ts        # all UI strings × 6 languages
+│   ├── strings.ts        # all UI strings × 7 languages
 │   ├── labels.*.ts       # livelihoods, sectors, education, AI phrases
 │   └── context.tsx       # I18nProvider + t()/tl() hooks
 ├── voice/speech.ts       # Web Speech API: recognition + synthesis
 ├── pages/                # Home, Assistant, Courses, Register, Dashboard
 └── App.tsx               # shell + navigation + language switcher
 ```
+
+## 📲 Install as an app (PWA)
+
+**Live app:** <https://krishna-sys120.github.io/SIH/>
+
+The app is a full PWA — installable, offline-capable, with its own icon:
+
+- **Android (Chrome):** open the link → tap **Install app** in the hero, or
+  Chrome menu → *Add to Home screen*.
+- **Windows (Chrome/Edge):** open the link → click **Install app**, or the
+  install icon in the address bar. It then runs in its own window like a
+  native app (also from the Start menu).
+- **iOS (Safari):** Share → *Add to Home Screen*.
+
+Every push to `main` redeploys the site automatically
+(`.github/workflows/deploy-pages.yml`). The hosted app runs in demo mode;
+point `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` at a real project for
+live data, and see `docs/twilio-setup.md` to enable SMS/WhatsApp/IVR.
 
 ## 🛠 Tech stack
 
