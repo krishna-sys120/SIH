@@ -24,7 +24,16 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm run build
+      # ── Quality gates: deployment is blocked if any of these fail ──
+      - name: Typecheck
+        run: npm run typecheck
+      - name: i18n completeness audit (7 languages)
+        run: npm run i18n:audit
+      - name: Unit tests
+        run: npm test
+      # ── Build + deploy ──
+      - name: Build
+        run: npm run build
         env:
           GITHUB_PAGES: "true"
       - name: SPA fallback

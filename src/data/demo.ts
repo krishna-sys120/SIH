@@ -41,6 +41,8 @@ const DEMO_BENEFICIARIES: Beneficiary[] = [
     education: "secondary",
     skills: "stitching, embroidery",
     interest: "fashion design",
+    consent_given: true,
+    consent_version: "v1",
     created_at: new Date(Date.now() - 3 * 864e5).toISOString(),
   },
   {
@@ -57,6 +59,7 @@ const DEMO_BENEFICIARIES: Beneficiary[] = [
     education: "primary",
     skills: "bamboo craft",
     interest: "handicrafts business",
+    consent_given: true,
     created_at: new Date(Date.now() - 6 * 864e5).toISOString(),
   },
   {
@@ -73,6 +76,7 @@ const DEMO_BENEFICIARIES: Beneficiary[] = [
     education: "senior",
     skills: "cooking",
     interest: "beauty & wellness",
+    consent_given: true,
     created_at: new Date(Date.now() - 1 * 864e5).toISOString(),
   },
   {
@@ -89,6 +93,7 @@ const DEMO_BENEFICIARIES: Beneficiary[] = [
     education: "secondary",
     skills: "two-wheeler repair",
     interest: "electric vehicles",
+    consent_given: true,
     created_at: new Date(Date.now() - 9 * 864e5).toISOString(),
   },
   {
@@ -105,6 +110,7 @@ const DEMO_BENEFICIARIES: Beneficiary[] = [
     education: "senior",
     skills: "basic computer",
     interest: "IT jobs",
+    consent_given: true,
     created_at: new Date(Date.now() - 2 * 864e5).toISOString(),
   },
 ];

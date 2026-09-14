@@ -1,7 +1,14 @@
 import type { Course } from "./model";
 
-/** Seed catalog of NSQF-aligned courses (also used as Supabase seed data). */
-export const COURSE_SEED: Course[] = [
+/**
+ * Seed catalog of NSQF-aligned courses (also used as Supabase seed data).
+ *
+ * Data quality (Phase 21): these are PROTOTYPE catalog rows for the demo —
+ * every row is badged "prototype" and the UI renders a ⚠ badge until a
+ * training partner's official listing (source + URL + verification date) is
+ * attached. We deliberately do NOT fabricate government course approvals.
+ */
+const COURSE_ROWS: Array<Omit<Course, "verification">> = [
   {
     id: "gc1",
     name: "Sewing Machine Operator",
@@ -227,3 +234,9 @@ export const COURSE_SEED: Course[] = [
     keywords: ["electric", "wiring", "repair", "solar"],
   },
 ];
+
+/** Public seed with honest data-quality labeling (Phase 21). */
+export const COURSE_SEED: Course[] = COURSE_ROWS.map((c) => ({
+  ...c,
+  verification: "prototype" as const,
+}));

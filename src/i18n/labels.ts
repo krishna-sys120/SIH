@@ -3,6 +3,7 @@ import type { Entry } from "./labels.livelihoods";
 import { LIVELIHOODS } from "./labels.livelihoods";
 import { SECTOR_LABELS, EDU_LABELS } from "./labels.misc";
 import { REASONS, AI_PHRASES } from "./labels.ai";
+import { SKILL_LABELS, QUESTION_LABELS, REASON_V2, BUSINESS_LABELS, NSQF_NOTICES } from "./labels.core";
 import { STRINGS } from "./strings";
 
 export type { Entry };
@@ -25,6 +26,11 @@ export const DYNAMIC: Record<string, Record<LangCode, string>> = {
   ...(EDU_LABELS as Record<string, Record<LangCode, string>>),
   ...(REASONS as Record<string, Record<LangCode, string>>),
   ...(AI_PHRASES as Record<string, Record<LangCode, string>>),
+  ...(SKILL_LABELS as Record<string, Record<LangCode, string>>),
+  ...(QUESTION_LABELS as Record<string, Record<LangCode, string>>),
+  ...(REASON_V2 as Record<string, Record<LangCode, string>>),
+  ...(BUSINESS_LABELS as Record<string, Record<LangCode, string>>),
+  ...(NSQF_NOTICES as Record<string, Record<LangCode, string>>),
 };
 
 /**

@@ -2,6 +2,7 @@ import type { Beneficiary, Course } from "./model";
 import { COURSE_SEED } from "./courses";
 import { hasSupabase, supabase } from "./supabase";
 import { addDemoBeneficiary, loadDemoBeneficiaries } from "./demo";
+import { flushOutbox, outboxCount, queueSubmission, type OutboxItem } from "./offline";
 
 export const usingSupabase = hasSupabase;
 
@@ -37,11 +38,13 @@ export function getCurrentBeneficiaryId(): string | null {
 /**
  * Identity used for enrollment writes AND reads — one resolver so the enrolled
  * state always round-trips. Demo mode falls back to a per-browser "local"
- * actor; Supabase mode demands a real registered uuid (null → callers block).
+ * actor (clearly labeled demo identity); Supabase mode demands a real
+ * registered uuid — the id returned by register_beneficiary(), never a shared
+ * constant (Phase 15: user A's enrollment must never appear for user B).
  */
 export function resolveActorId(): string | null {
   const id = getCurrentBeneficiaryId();
-  if (id) return id;
+  if (id && id !== "local") return id;
   return usingSupabase ? null : "local";
 }
 
@@ -109,11 +112,16 @@ export async function fetchBeneficiaries(): Promise<Beneficiary[]> {
   return loadDemoBeneficiaries();
 }
 
-export async function saveBeneficiary(b: Beneficiary): Promise<Beneficiary> {
+export async function saveBeneficiary(
+  b: Beneficiary,
+  opts: { profile?: unknown; consentVersion?: string } = {},
+): Promise<Beneficiary> {
   const rec = { ...b, created_at: new Date().toISOString() };
   if (hasSupabase && supabase) {
-    // Table-level SELECT is auth-only under the schema's RLS, so registration
-    // goes through this security-definer RPC, which returns just the new uuid.
+    // Consent is mandatory (Phase 3) — the RPC rejects submissions without it.
+    if (!b.consent_given) {
+      throw new Error("consent is required before saving a beneficiary profile");
+    }
     const { data, error } = await supabase.rpc("register_beneficiary", {
       p: {
         name: b.name,
@@ -128,6 +136,9 @@ export async function saveBeneficiary(b: Beneficiary): Promise<Beneficiary> {
         education: b.education,
         skills: b.skills,
         interest: b.interest,
+        consent: true,
+        consent_version: opts.consentVersion ?? "v1",
+        profile: (opts.profile ?? {}) as object,
       },
     });
     if (error) throw new Error(error.message);
@@ -137,27 +148,48 @@ export async function saveBeneficiary(b: Beneficiary): Promise<Beneficiary> {
   return rec;
 }
 
-export async function enrollBeneficiary(beneficiaryId: string, courseId: string): Promise<void> {
+/** Submit a profile with offline support: queue when offline, flush when back. */
+export async function submitBeneficiary(
+  b: Beneficiary,
+  opts: { profile?: unknown } = {},
+): Promise<{ id: string | null; queued: boolean }> {
+  if (!navigator.onLine && hasSupabase) {
+    queueSubmission("beneficiary", b);
+    return { id: null, queued: true };
+  }
+  const rec = await saveBeneficiary(b, opts);
+  return { id: rec.id ?? null, queued: false };
+}
+
+export { flushOutbox, outboxCount };
+export type { OutboxItem };
+
+export async function enrollBeneficiary(beneficiaryId: string, courseId: string): Promise<{ seatsLeft: number | null }> {
   if (hasSupabase && supabase) {
-    // enrollments.beneficiary_id is a uuid FK — "local" would hard-fail.
-    // Callers resolve via resolveActorId() and surface the no-profile guard.
+    // Transactional server RPC (Phase 2/15): authorizes ownership, checks
+    // seats, prevents duplicates, inserts + decrements atomically. "local"
+    // identities are demo-mode-only and can never reach this path.
     if (!beneficiaryId || beneficiaryId === "local") {
       throw new Error("enrollment requires a registered beneficiary (save your profile first)");
     }
-    const { error } = await supabase
-      .from("enrollments")
-      .insert({ beneficiary_id: beneficiaryId, course_id: courseId, status: "enrolled" });
+    const { data, error } = await supabase.rpc("enroll_beneficiary", {
+      p_beneficiary_id: beneficiaryId,
+      p_course_id: courseId,
+    });
     if (error) throw new Error(error.message);
-    await supabase.rpc("decrement_seats", { course: courseId });
-    return;
+    const result = (data ?? {}) as { seats_left?: number };
+    return { seatsLeft: result.seats_left ?? null };
   }
   // Demo mode: persisted local store — single source of truth for enrolled state.
   const list = readDemoEnrollments();
-  if (list.some((e) => e.beneficiary_id === beneficiaryId && e.course_id === courseId)) return;
+  if (list.some((e) => e.beneficiary_id === beneficiaryId && e.course_id === courseId)) {
+    return { seatsLeft: null };
+  }
   list.push({ beneficiary_id: beneficiaryId, course_id: courseId, at: new Date().toISOString() });
   try {
     localStorage.setItem(ENROLL_KEY, JSON.stringify(list));
-  } catch {
-    /* storage full/unavailable — nothing durable to do */
+  } catch (e) {
+    console.warn("[demo] enrollment persist failed", e);
   }
+  return { seatsLeft: null };
 }

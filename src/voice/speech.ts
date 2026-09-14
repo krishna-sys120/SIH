@@ -167,7 +167,7 @@ export function findVoiceFor(voices: SpeechSynthesisVoice[], lang: string): Spee
 }
 
 /** Speak text aloud in the given language; resolves when done. */
-export function speak(text: string, lang: string): Promise<void> {
+export function speak(text: string, lang: string, rate = 0.95): Promise<void> {
   return ensureVoices().then(
     (voices) =>
       new Promise<void>((resolve) => {
@@ -181,7 +181,7 @@ export function speak(text: string, lang: string): Promise<void> {
 
         const u = new SpeechSynthesisUtterance(clean);
         u.lang = lang;
-        u.rate = 0.95;
+        u.rate = rate;
         u.pitch = 1;
         const voice = findVoiceFor(voices, lang);
         if (voice) u.voice = voice;

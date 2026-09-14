@@ -10,6 +10,7 @@ import {
   usingSupabase,
 } from "../data/store";
 import { recommendCourses } from "../data/recommend";
+import { useOnline } from "../data/offline";
 import { SECTORS, type Course, type MatchResult } from "../data/model";
 
 export default function Courses({ nav }: { nav: Nav }) {
@@ -20,7 +21,9 @@ export default function Courses({ nav }: { nav: Nav }) {
   const [enrolled, setEnrolled] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [enrollError, setEnrollError] = useState(false);
+  const [enrollErrorMsg, setEnrollErrorMsg] = useState<string | null>(null);
   const [noProfile, setNoProfile] = useState(false);
+  const online = useOnline();
   /** Locally-deducted seats in demo mode (persisted store is not writable from the UI). */
   const [seatsUsed, setSeatsUsed] = useState<Record<string, number>>({});
 
@@ -38,7 +41,7 @@ export default function Courses({ nav }: { nav: Nav }) {
     if (benId) {
       listMyEnrollments(benId)
         .then(setEnrolled)
-        .catch(() => {});
+        .catch((e) => console.warn("[courses] my-enrollments load failed", e));
     }
     // Demo mode only: seed seats are static, so derive deducted seats from the
     // persisted local store. In Supabase mode the DB already reflects seats.
@@ -49,12 +52,14 @@ export default function Courses({ nav }: { nav: Nav }) {
           for (const r of rows) counts[r.course_id] = (counts[r.course_id] ?? 0) + 1;
           setSeatsUsed(counts);
         })
-        .catch(() => {});
+        .catch((e) => console.warn("[courses] enrollments load failed", e));
     }
   }, []);
 
   useEffect(() => {
-    fetchCourses().then(setCourses).catch(() => {});
+    fetchCourses()
+      .then(setCourses)
+      .catch((e) => console.warn("[courses] load failed", e));
   }, []);
 
   const scored: MatchResult[] = useMemo(() => {
@@ -80,6 +85,7 @@ export default function Courses({ nav }: { nav: Nav }) {
   async function handleEnroll(courseId: string) {
     if (enrolled.has(courseId)) return;
     setEnrollError(false);
+    setEnrollErrorMsg(null);
     const benId = resolveActorId();
     // Supabase enrollment posts a real uuid — a saved profile is mandatory.
     if (!benId) {
@@ -87,11 +93,16 @@ export default function Courses({ nav }: { nav: Nav }) {
       return;
     }
     try {
-      await enrollBeneficiary(benId, courseId);
+      const res = await enrollBeneficiary(benId, courseId);
       setEnrolled((s) => new Set(s).add(courseId));
       setSeatsUsed((m) => ({ ...m, [courseId]: (m[courseId] ?? 0) + 1 }));
-    } catch {
+      if (res.seatsLeft !== null) {
+        setCourses((cs) => cs.map((c) => (c.id === courseId ? { ...c, seats_left: res.seatsLeft! } : c)));
+      }
+    } catch (e) {
+      console.warn("[courses] enrollment failed", e);
       setEnrollError(true);
+      setEnrollErrorMsg(e instanceof Error ? e.message : null);
     }
   }
 
@@ -111,9 +122,15 @@ export default function Courses({ nav }: { nav: Nav }) {
           </button>
         </div>
       )}
+      {!online && (
+        <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3">
+          📴 {t("offline.notice")}
+        </div>
+      )}
       {enrollError && (
         <div className="mt-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm px-4 py-3">
           {t("courses.enrollFailed")}
+          {enrollErrorMsg ? ` — ${enrollErrorMsg}` : ""}
         </div>
       )}
 
@@ -177,6 +194,17 @@ export default function Courses({ nav }: { nav: Nav }) {
                 </div>
                 <h3 className="mt-3 font-bold text-slate-900 leading-snug">{c.name}</h3>
                 <p className="mt-1 text-sm text-slate-500">{c.provider}</p>
+
+                {/* Data-quality badge (Phase 21) — honest provenance. */}
+                {c.verification === "official" ? (
+                  <span className="mt-2 inline-block text-[11px] font-semibold text-leaf-700 bg-leaf-500/10 rounded-full px-2 py-0.5">
+                    ✓ {t("courses.verified")}
+                  </span>
+                ) : (
+                  <span className="mt-2 inline-block text-[11px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">
+                    ⚠ {t("courses.prototypeData")}
+                  </span>
+                )}
 
                 <div className="mt-3 flex flex-wrap gap-1.5 text-xs text-slate-600">
                   <span className="bg-slate-100 rounded-md px-2 py-1">

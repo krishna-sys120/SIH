@@ -50,6 +50,11 @@ export interface Course {
   stipend_monthly: number;
   languages: string[];
   keywords: string[];
+  /** Data-quality provenance (Phase 21) — honest sourcing, never faked. */
+  verification?: "official" | "prototype";
+  source?: string;
+  source_url?: string;
+  verification_date?: string;
 }
 
 export interface Beneficiary {
@@ -66,6 +71,10 @@ export interface Beneficiary {
   education: string;
   skills: string;
   interest: string;
+  /** Informed consent (Phase 3) — required before persisting the profile. */
+  consent_given: boolean;
+  consent_timestamp?: string;
+  consent_version?: string;
   created_at?: string;
 }
 

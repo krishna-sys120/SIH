@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import type { Nav } from "../App";
 import { useI18n } from "../i18n/context";
-import { saveBeneficiary, fetchCourses } from "../data/store";
+import { submitBeneficiary, fetchCourses, flushOutbox } from "../data/store";
 import { recommendCourses } from "../data/recommend";
+import { useOnline } from "../data/offline";
 import {
   LIVELIHOOD_IDS,
   type LivelihoodId,
@@ -12,6 +13,7 @@ import {
   type EducationLevel,
 } from "../data/model";
 import { translateDynamic } from "../i18n/labels";
+import type { LivelihoodProfile } from "../../supabase/functions/_shared/extract";
 
 const STATES = [
   "Andhra Pradesh",
@@ -65,13 +67,25 @@ interface Form {
 
 export default function Register({ nav }: { nav: Nav }) {
   const { t, tl } = useI18n();
+  const online = useOnline();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>(EMPTY);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState<Beneficiary | null>(null);
+  const [queued, setQueued] = useState(false);
   const [matches, setMatches] = useState<MatchResult[]>([]);
   const [courses, setCourses] = useState<MatchResult[]>([]);
+  /** Structured profile handed over from the voice interview, if any. */
+  const [interviewProfile] = useState<LivelihoodProfile | null>(() => {
+    try {
+      const raw = localStorage.getItem("skillsetu.interviewProfile");
+      return raw ? (JSON.parse(raw) as LivelihoodProfile) : null;
+    } catch {
+      return null;
+    }
+  });
 
   const stepTitles = [t("register.step.personal"), t("register.step.livelihood"), t("register.step.skills")];
 
@@ -89,6 +103,7 @@ export default function Register({ nav }: { nav: Nav }) {
   async function handleSubmit() {
     setSaving(true);
     setError(false);
+    setErrorMsg(null);
     const ben: Beneficiary = {
       name: form.name.trim(),
       age: Number(form.age),
@@ -102,21 +117,37 @@ export default function Register({ nav }: { nav: Nav }) {
       education: form.education,
       skills: form.skills.trim(),
       interest: form.interest.trim(),
+      consent_given: form.consent,
+      consent_timestamp: new Date().toISOString(),
+      consent_version: "v1",
     };
     try {
-      const rec = await saveBeneficiary(ben);
+      const res = await submitBeneficiary(ben, { profile: interviewProfile ?? {} });
       const all = await fetchCourses();
       const ranked = recommendCourses(ben, all, 4);
       setMatches(ranked);
-      setSaved(rec);
-      try {
-        localStorage.setItem("skillsetu.lastProfile", JSON.stringify(ben));
-        localStorage.setItem("skillsetu.lastId", JSON.stringify(rec.id ?? "local"));
-      } catch {
-        /* ignore */
+      setQueued(res.queued);
+      if (res.queued) {
+        // Queued offline — show success-with-pending state, no id yet.
+        setSaved({ ...ben, id: undefined });
+      } else {
+        setSaved({ ...ben, id: res.id ?? undefined });
+        try {
+          localStorage.setItem("skillsetu.lastProfile", JSON.stringify(ben));
+          if (res.id) localStorage.setItem("skillsetu.lastId", JSON.stringify(res.id));
+        } catch (e) {
+          console.warn("[register] profile persist failed", e);
+        }
       }
-    } catch {
+      // Opportunistically sync anything queued from earlier offline sessions.
+      void flushOutbox(async (payload) => {
+        const r = await submitBeneficiary(payload, { profile: interviewProfile ?? {} });
+        return r.id ?? "";
+      });
+    } catch (e) {
       setError(true);
+      setErrorMsg(e instanceof Error ? e.message : null);
+      console.warn("[register] save failed", e);
     } finally {
       setSaving(false);
     }
@@ -132,7 +163,9 @@ export default function Register({ nav }: { nav: Nav }) {
           <h1 className="mt-4 text-2xl md:text-3xl font-extrabold text-slate-900">
             {t("register.success.title")}
           </h1>
-          <p className="mt-2 text-slate-600">{t("register.success.desc")}</p>
+          <p className="mt-2 text-slate-600">
+            {queued ? t("register.success.queued") : t("register.success.desc")}
+          </p>
         </div>
         <div className="mt-8 space-y-3">
           {matches.map((m) => (
@@ -334,7 +367,12 @@ export default function Register({ nav }: { nav: Nav }) {
               placeholder={t("assistant.try.q1")}
             />
           </Field>
-          <label className="flex items-start gap-2.5 bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-sm text-slate-600 cursor-pointer">
+          {/* Consent notice (Phase 3): clear, in-language, before data is saved. */}
+          <div className="bg-indigoink-50 border border-indigoink-100 rounded-xl p-4 text-sm text-slate-600">
+            <p className="font-semibold text-slate-800">🔒 {t("consent.notice.title")}</p>
+            <p className="mt-1">{t("consent.notice.body")}</p>
+          </div>
+          <label className="flex items-start gap-2.5 bg-white border border-slate-200 rounded-xl p-3.5 text-sm text-slate-600 cursor-pointer">
             <input
               type="checkbox"
               checked={form.consent}
@@ -349,6 +387,10 @@ export default function Register({ nav }: { nav: Nav }) {
       {error && (
         <p className="mt-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm px-4 py-3">
           {t("register.error")}
+          {errorMsg ? ` — ${errorMsg}` : ""}{" "}
+          <button onClick={handleSubmit} className="underline font-medium">
+            {t("common.retry")}
+          </button>
         </p>
       )}
 

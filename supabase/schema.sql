@@ -37,8 +37,26 @@ create table if not exists public.beneficiaries (
   education  text not null default 'secondary',
   skills     text not null default '',
   interest   text not null default '',
-  created_at timestamptz not null default now()
+  -- Consent (Phase 3): recorded before personal data is stored.
+  consent_given       boolean not null default false,
+  consent_timestamp   timestamptz,
+  consent_version     text not null default 'v1',
+  -- Interview profile (Phase 4): structured JSON built by the voice/text
+  -- interview; service-side validation happens in the RPC layer.
+  profile    jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  -- Duplicate-registration guard: one phone = one beneficiary record.
+  unique (phone)
 );
+
+-- Missing-column guard for projects that ran an older schema version.
+alter table public.beneficiaries add column if not exists consent_given boolean not null default false;
+alter table public.beneficiaries add column if not exists consent_timestamp timestamptz;
+alter table public.beneficiaries add column if not exists consent_version text not null default 'v1';
+alter table public.beneficiaries add column if not exists profile jsonb not null default '{}'::jsonb;
+do $$ begin
+  alter table public.beneficiaries add constraint beneficiaries_phone_key unique (phone);
+exception when duplicate_object then null; end $$;
 
 -- 3. Enrollments (beneficiary ↔ course)
 create table if not exists public.enrollments (
@@ -68,33 +86,60 @@ create policy "public read courses" on public.courses
 
 drop policy if exists "public read beneficiaries" on public.beneficiaries;
 drop policy if exists "public insert beneficiaries" on public.beneficiaries;
+drop policy if exists "authenticated read beneficiaries" on public.beneficiaries;
+drop policy if exists "authenticated insert beneficiaries" on public.beneficiaries;
+drop policy if exists "authenticated update beneficiaries" on public.beneficiaries;
 
-create policy "authenticated read beneficiaries" on public.beneficiaries
-  for select to authenticated using (true);
-create policy "authenticated insert beneficiaries" on public.beneficiaries
-  for insert to authenticated with check (true);
-create policy "authenticated update beneficiaries" on public.beneficiaries
-  for update to authenticated using (true) with check (true);
+-- Beneficiaries (Phase 2): a beneficiary sees/edits ONLY their own row
+-- (linked via auth.uid() — register_beneficiary() sets user_id), staff/admin
+-- see the directory view instead of the raw PII table. No anon policies:
+-- registration happens exclusively through the register_beneficiary() RPC.
+create policy "beneficiary own row select" on public.beneficiaries
+  for select to authenticated
+  using (auth.uid() = user_id or public.is_staff() or public.is_admin());
+create policy "beneficiary own row update" on public.beneficiaries
+  for update to authenticated
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
--- Enrollments hold pseudonymous ids + timestamps (no direct PII). Anonymous
--- users may enroll (FK guarantees a real beneficiary) but may NOT list other
--- people's enrollments; the client tracks its own enrolled state after insert,
--- and the unique(beneficiary_id, course_id) constraint blocks double-enrolls.
--- For production, gate selects on authenticated with a
--- beneficiary_id = auth.uid() style policy and give staff a secure admin role.
+alter table public.beneficiaries add column if not exists user_id uuid references auth.users(id) on delete set null;
+create index if not exists idx_beneficiaries_user on public.beneficiaries (user_id);
+
+-- Enrollments: NO anonymous writes at all (Phase 2 — the old public-insert
+-- policy allowed spoofed enrollment rows). Enrollments happen exclusively via
+-- the transactional enroll_beneficiary() RPC; users read only their own
+-- enrollment rows; staff/admin read all (for the authorized dashboard).
 drop policy if exists "public read enrollments" on public.enrollments;
 drop policy if exists "pseudonymous read enrollments" on public.enrollments;
-create policy "authenticated read enrollments" on public.enrollments
-  for select to authenticated using (true);
-create policy "authenticated manage enrollments" on public.enrollments
-  for all to authenticated using (true) with check (true);
+drop policy if exists "authenticated read enrollments" on public.enrollments;
+drop policy if exists "authenticated manage enrollments" on public.enrollments;
 drop policy if exists "public insert enrollments" on public.enrollments;
-create policy "public insert enrollments" on public.enrollments
-  for insert with check (true);
+
+create policy "own enrollments select" on public.enrollments
+  for select to authenticated
+  using (
+    exists (select 1 from public.beneficiaries b
+            where b.id = enrollments.beneficiary_id and b.user_id = auth.uid())
+    or public.is_staff() or public.is_admin()
+  );
+create policy "own enrollments update" on public.enrollments
+  for update to authenticated
+  using (
+    exists (select 1 from public.beneficiaries b
+            where b.id = enrollments.beneficiary_id and b.user_id = auth.uid())
+  )
+  with check (
+    exists (select 1 from public.beneficiaries b
+            where b.id = enrollments.beneficiary_id and b.user_id = auth.uid())
+  );
 
 -- 4b. Registration RPC — the ONLY anonymous write path into beneficiaries.
 -- Security definer so the client never needs SELECT on the base table, and it
 -- returns just the new uuid (no PII round-trip).
+--
+-- Consent (Phase 3) is mandatory: p->'consent' must be true, and the version
+-- and timestamp are recorded on the row. Duplicate phones return the EXISTING
+-- beneficiary's id (idempotent registration, no PII leak — same caller sees
+-- only the uuid).
 create or replace function public.register_beneficiary(p jsonb)
 returns uuid
 language plpgsql
@@ -104,18 +149,99 @@ as $$
 declare
   v_id uuid;
 begin
+  -- Input validation (defense in depth — the client validates too).
+  if p is null then raise exception 'missing payload'; end if;
+  if coalesce(p->>'consent', 'false') is distinct from 'true' then
+    raise exception 'consent is required before registering';
+  end if;
+  if length(coalesce(p->>'name', '')) < 2 or length(p->>'name') > 80 then
+    raise exception 'invalid name';
+  end if;
+  if (p->>'phone') !~ '^[6-9][0-9]{9}$' then raise exception 'invalid phone'; end if;
+  if coalesce((p->>'age')::int, 0) not between 15 and 60 then raise exception 'invalid age'; end if;
+
   insert into public.beneficiaries
-    (name, age, gender, phone, state, district, category, income, work_type, education, skills, interest)
+    (name, age, gender, phone, state, district, category, income, work_type,
+     education, skills, interest, consent_given, consent_timestamp,
+     consent_version, profile, user_id)
   values
     (p->>'name', (p->>'age')::int, p->>'gender', p->>'phone', p->>'state', p->>'district',
      coalesce(p->>'category', 'sc'), coalesce((p->>'income')::int, 0), p->>'work_type',
-     coalesce(p->>'education', 'secondary'), coalesce(p->>'skills', ''), coalesce(p->>'interest', ''))
+     coalesce(p->>'education', 'secondary'), coalesce(p->>'skills', ''), coalesce(p->>'interest', ''),
+     true, now(), coalesce(p->>'consent_version', 'v1'),
+     coalesce(p->'profile', '{}'::jsonb), auth.uid())
+  on conflict (phone) do update
+    set name = excluded.name,
+        age = excluded.age,
+        district = excluded.district,
+        work_type = excluded.work_type,
+        education = excluded.education,
+        skills = excluded.skills,
+        interest = excluded.interest,
+        profile = excluded.profile,
+        -- take ownership if the same person is now logged in
+        user_id = coalesce(public.beneficiaries.user_id, auth.uid())
   returning id into v_id;
   return v_id;
 end;
 $$;
 revoke all on function public.register_beneficiary(jsonb) from public;
 grant execute on function public.register_beneficiary(jsonb) to anon, authenticated;
+
+-- 4c-0. App roles (Phase 2): staff/admin identified by user_metadata.app_role
+-- set at invite time by an administrator. Beneficiary = any other auth user.
+-- The is_staff()/is_admin() helpers are SECURITY DEFINER + STABLE so RLS can
+-- call them without recursive policy evaluation.
+create or replace function public.is_staff()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(
+    (auth.jwt() -> 'user_metadata' ->> 'app_role') in ('staff','admin'), false);
+$$;
+
+create or replace function public.is_admin()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((auth.jwt() -> 'user_metadata' ->> 'app_role') = 'admin', false);
+$$;
+
+revoke all on function public.is_staff() from public, anon;
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_staff() to authenticated;
+grant execute on function public.is_admin() to authenticated;
+
+-- 4c-0b. PUBLIC_ANALYTICS_VIEW — aggregate-only, zero PII, safe for public
+-- demo dashboards (counts and ratios only, no rows, no names/phones/ids).
+drop view if exists public.public_analytics_view;
+create view public.public_analytics_view as
+select
+  (select count(*) from public.beneficiaries)                          as beneficiaries_total,
+  (select count(*) from public.beneficiaries where gender = 'female')  as beneficiaries_female,
+  (select count(*) from public.enrollments)                            as enrollments_total,
+  (select count(*) from public.enrollments where status = 'enrolled')  as enrollments_active,
+  (select count(*) from public.enrollments where status = 'completed') as enrollments_completed,
+  (select count(*) from public.courses)                                as courses_total,
+  (select coalesce(sum(seats_left), 0) from public.courses)            as seats_available;
+
+grant select on public.public_analytics_view to anon, authenticated;
+
+-- 4c-0c. AUTHORIZED_ADMIN_VIEW — row-level aggregates per district/sector for
+-- authenticated staff/admin only; still PII-free (no names/phones/ids).
+drop view if exists public.authorized_admin_view;
+create view public.authorized_admin_view as
+select
+  b.state, b.district, b.gender, b.work_type, b.education,
+  case when b.age < 18 then 'under-18'
+       when b.age < 25 then '18-24'
+       when b.age < 35 then '25-34'
+       when b.age < 50 then '35-49'
+       else '50+' end as age_band,
+  count(*) as beneficiaries,
+  date_trunc('month', b.created_at) as cohort_month
+from public.beneficiaries b
+group by 1,2,3,4,5,6, date_trunc('month', b.created_at);
+
+grant select on public.authorized_admin_view to authenticated;
 
 -- 4c. PII-free directory for the admin dashboard: aggregates only — no names,
 -- phones, ages or incomes; created_at is truncated to month granularity.
@@ -147,15 +273,86 @@ from public.beneficiaries b;
 
 grant select on public.beneficiary_directory to anon, authenticated;
 
--- 5. Atomic seat decrement used on enrollment
+-- 5. Transactional enrollment RPC (Phase 2/15) — replaces the old
+-- client-side insert + separate decrement_seats() pair, which was neither
+-- atomic nor spoof-resistant.
+--
+-- One transaction:
+--   1. authorize: caller owns the beneficiary profile (auth.uid()) OR is staff/admin
+--   2. verify course exists
+--   3. verify seats available (row-locked FOR UPDATE)
+--   4. reject duplicate enrollment
+--   5. insert enrollment
+--   6. decrement seats
+-- Any failure aborts the whole transaction — nothing is committed.
+create or replace function public.enroll_beneficiary(
+  p_beneficiary_id uuid,
+  p_course_id text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ben_user uuid;
+  v_seats int;
+  v_already int;
+begin
+  -- 1. Authorization: owner or staff/admin.
+  if auth.uid() is null then
+    raise exception 'authentication required to enroll';
+  end if;
+  select user_id into v_ben_user from public.beneficiaries where id = p_beneficiary_id;
+  if v_ben_user is null then raise exception 'beneficiary not found'; end if;
+  if v_ben_user <> auth.uid() and not public.is_staff() and not public.is_admin() then
+    raise exception 'not authorized to enroll this beneficiary';
+  end if;
+
+  -- 2. Course must exist (row-locked so concurrent enrollments serialize).
+  select seats_left into v_seats
+  from public.courses
+  where id = p_course_id
+  for update;
+  if not found then raise exception 'course not found'; end if;
+
+  -- 3. Duplicate prevention.
+  select count(*) into v_already
+  from public.enrollments
+  where beneficiary_id = p_beneficiary_id and course_id = p_course_id;
+  if v_already > 0 then
+    return jsonb_build_object('ok', true, 'duplicate', true, 'seats_left', v_seats);
+  end if;
+
+  -- 4. Seat availability.
+  if v_seats <= 0 then raise exception 'course is full'; end if;
+
+  -- 5. Insert + 6. decrement — committed together or not at all.
+  insert into public.enrollments (beneficiary_id, course_id, status)
+  values (p_beneficiary_id, p_course_id, 'enrolled');
+
+  update public.courses
+     set seats_left = seats_left - 1
+   where id = p_course_id;
+
+  return jsonb_build_object('ok', true, 'duplicate', false, 'seats_left', v_seats - 1);
+end;
+$$;
+
+revoke all on function public.enroll_beneficiary(uuid, text) from public, anon;
+grant execute on function public.enroll_beneficiary(uuid, text) to authenticated;
+
+-- Legacy entry point kept for one release: any leftover client calling
+-- decrement_seats() directly can no longer corrupt counts from anon.
 create or replace function public.decrement_seats(course text)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  update public.courses
-     set seats_left = greatest(0, seats_left - 1)
-   where id = decrement_seats.course;
+  -- Deprecated: enrollment is handled by enroll_beneficiary(). Deliberately
+  -- hard-no-op for safety; kept so old deploys do not error in logs.
+  null;
 end;
 $$;
+revoke all on function public.decrement_seats(text) from public, anon;
 
 -- ============================================================
 -- 6. Seed data — NSQF course catalogue

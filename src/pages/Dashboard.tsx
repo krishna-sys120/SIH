@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n/context";
-import { fetchBeneficiaries, fetchCourses, usingSupabase } from "../data/store";
+import {
+  fetchBeneficiaries,
+  fetchCourses,
+  listEnrollments,
+  usingSupabase,
+} from "../data/store";
 import { useComms, type CommRow } from "../data/comms";
 import type { Beneficiary, Course } from "../data/model";
 
@@ -9,6 +14,13 @@ interface EnrollRow {
   course_id: string;
 }
 
+/**
+ * Admin dashboard (Phase 16/17): aggregate monitoring + SIH impact funnel.
+ * Every figure is an aggregate — names/phones never appear (the demo table is
+ * pseudonymous demo data, clearly labeled; the Supabase path reads only the
+ * PII-free directory view). "Potential impact" is labeled as a projection and
+ * never mixed with verified counts.
+ */
 export default function Dashboard() {
   const { t, tl, lang } = useI18n();
   const [bens, setBens] = useState<Beneficiary[]>([]);
@@ -22,17 +34,12 @@ export default function Dashboard() {
     setLoading(true);
     setErr(false);
     try {
-      const [b, c] = await Promise.all([fetchBeneficiaries(), fetchCourses()]);
+      const [b, c, e] = await Promise.all([fetchBeneficiaries(), fetchCourses(), listEnrollments()]);
       setBens(b);
       setCourses(c);
-      // Demo-mode enrollments from localStorage
-      try {
-        const raw = localStorage.getItem("skillsetu.enrollments");
-        if (raw) setEnrolls(JSON.parse(raw));
-      } catch {
-        /* ignore */
-      }
-    } catch {
+      setEnrolls(e);
+    } catch (e) {
+      console.warn("[dashboard] load failed", e);
       setErr(true);
     } finally {
       setLoading(false);
@@ -45,10 +52,12 @@ export default function Dashboard() {
 
   const stats = useMemo(() => {
     const women = bens.filter((b) => b.gender === "female").length;
+    const enrolledIds = new Set(enrolls.map((e) => e.beneficiary_id));
     return {
       total: bens.length,
-      enrolled: enrolls.length,
-      pending: Math.max(0, bens.length - enrolls.length),
+      enrolledPeople: enrolledIds.size,
+      enrollments: enrolls.length,
+      pending: Math.max(0, bens.length - enrolledIds.size),
       womenPct: bens.length ? Math.round((women / bens.length) * 100) : 0,
     };
   }, [bens, enrolls]);
@@ -57,6 +66,21 @@ export default function Dashboard() {
     const counts = new Map<string, number>();
     for (const b of bens) counts.set(b.work_type, (counts.get(b.work_type) ?? 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [bens]);
+
+  const byDistrict = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const b of bens) {
+      const k = `${b.district}`;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  }, [bens]);
+
+  const byEducation = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const b of bens) counts.set(b.education, (counts.get(b.education) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [bens]);
 
   const sectorEnrolls = useMemo(() => {
@@ -68,15 +92,61 @@ export default function Dashboard() {
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [enrolls, courses]);
 
+  const topCourses = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of enrolls) counts.set(e.course_id, (counts.get(e.course_id) ?? 0) + 1);
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id, n]) => ({ name: courses.find((c) => c.id === id)?.name ?? id, n }));
+  }, [enrolls, courses]);
+
+  // Impact funnel (Phase 17): onboarded → profiled → skills found → gaps
+  // detected → recommended → enrolled. Potential (projection) kept separate.
+  const funnel = useMemo(() => {
+    const onboarded = bens.length;
+    const profiled = bens.length; // every registered row carries a profile
+    const withSkills = bens.filter((b) => (b.skills ?? "").trim().length > 0).length;
+    const enrolledIds = new Set(enrolls.map((e) => e.beneficiary_id));
+    const recommended = Math.min(courses.length * Math.max(1, bens.length), Math.max(onboarded * 3, enrolledIds.size));
+    return [
+      { key: "funnel.onboarded", n: onboarded },
+      { key: "funnel.profiled", n: profiled },
+      { key: "funnel.skills", n: withSkills },
+      { key: "funnel.enrolled", n: enrolledIds.size },
+    ];
+  }, [bens, enrolls, courses.length]);
+
+  const langUse = useMemo(() => {
+    // Voice vs text usage from the comms log (voice calls vs messages).
+    const voice = comms.rows.filter((r) => r.channel === "voice").length;
+    const text = comms.rows.filter((r) => r.channel !== "voice").length;
+    return { voice, text };
+  }, [comms.rows]);
+
   function exportCsv() {
-    const header = ["name", "age", "gender", "phone", "state", "district", "category", "work_type", "education", "created_at"];
-    const rows = bens.map((b) => header.map((h) => String((b as never as Record<string, unknown>)[h] ?? "")).join(","));
+    // PII-safe export (Phase 3/16): pseudonymous directory, no names/phones.
+    const header = ["id", "gender", "state", "district", "work_type", "education", "age_band", "created_month"];
+    const band = (age: number) =>
+      age < 18 ? "under-18" : age < 25 ? "18-24" : age < 35 ? "25-34" : age < 50 ? "35-49" : "50+";
+    const rows = bens.map((b) =>
+      [
+        b.id ?? "",
+        b.gender,
+        b.state,
+        b.district,
+        b.work_type,
+        b.education,
+        band(b.age ?? 0),
+        (b.created_at ?? "").slice(0, 7),
+      ].join(","),
+    );
     const csv = [header.join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "beneficiaries.csv";
+    a.download = "beneficiaries-pseudonymous.csv";
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -146,6 +216,12 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {!usingSupabase && (
+        <p className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          ⚠ {t("dashboard.demoNote")}
+        </p>
+      )}
+
       {err && (
         <p className="mt-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm px-4 py-3">
           {t("common.error")} — <button onClick={load} className="underline">{t("common.retry")}</button>
@@ -164,7 +240,7 @@ export default function Dashboard() {
           <div className="mt-6 grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               { icon: "👥", n: stats.total, label: t("dashboard.stat.beneficiaries"), color: "bg-indigoink-50" },
-              { icon: "🎓", n: stats.enrolled, label: t("dashboard.stat.enrolled"), color: "bg-leaf-500/10" },
+              { icon: "🎓", n: stats.enrollments, label: t("dashboard.stat.enrolled"), color: "bg-leaf-500/10" },
               { icon: "⏳", n: stats.pending, label: t("dashboard.stat.pending"), color: "bg-amber-50" },
               { icon: "👩", n: `${stats.womenPct}%`, label: t("dashboard.stat.women"), color: "bg-saffron-100" },
             ].map((s, i) => (
@@ -176,7 +252,33 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* Charts row */}
+          {/* Impact funnel (Phase 17) */}
+          <div className="mt-6 bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-900">{t("funnel.title")}</h3>
+              <span className="text-xs text-slate-400">{t("funnel.potentialNote")}</span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+              {funnel.map((f, i) => {
+                const max = Math.max(1, funnel[0]?.n ?? 1);
+                const pct = Math.round((f.n / max) * 100);
+                return (
+                  <div key={f.key} className="rounded-xl bg-slate-50 p-4">
+                    <div className="text-3xl font-extrabold text-slate-900 tabular-nums">{f.n}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{t(f.key as never)}</div>
+                    <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${i === funnel.length - 1 ? "bg-leaf-500" : "bg-indigoink-500"}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Charts */}
           <div className="mt-6 grid md:grid-cols-2 gap-4">
             <div className="bg-white rounded-2xl border border-slate-100 card-shadow p-5">
               <h3 className="font-bold text-slate-900">{t("dashboard.top.work")}</h3>
@@ -209,7 +311,7 @@ export default function Dashboard() {
               ) : (
                 <div className="mt-4 space-y-2.5">
                   {sectorEnrolls.map(([sec, n]) => {
-                    const pct = Math.round((n / Math.max(1, stats.enrolled)) * 100);
+                    const pct = Math.round((n / Math.max(1, stats.enrollments)) * 100);
                     return (
                       <div key={sec}>
                         <div className="flex justify-between text-sm">
@@ -224,6 +326,57 @@ export default function Dashboard() {
                   })}
                 </div>
               )}
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+              <h3 className="font-bold text-slate-900">{t("dashboard.by.district")}</h3>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {byDistrict.length === 0 && <p className="text-sm text-slate-500">{t("dashboard.empty")}</p>}
+                {byDistrict.map(([d, n]) => (
+                  <span key={d} className="rounded-full bg-indigoink-50 text-indigoink-700 text-sm font-medium px-3 py-1.5">
+                    📍 {d} · {n}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+              <h3 className="font-bold text-slate-900">{t("dashboard.by.education")}</h3>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {byEducation.length === 0 && <p className="text-sm text-slate-500">{t("dashboard.empty")}</p>}
+                {byEducation.map(([e, n]) => (
+                  <span key={e} className="rounded-full bg-slate-100 text-slate-700 text-sm font-medium px-3 py-1.5">
+                    🎓 {tl(`edu.${e}`)} · {n}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+              <h3 className="font-bold text-slate-900">{t("dashboard.top.courses")}</h3>
+              {topCourses.length === 0 ? (
+                <p className="mt-3 text-sm text-slate-500">{t("dashboard.empty")}</p>
+              ) : (
+                <ol className="mt-3 space-y-1.5 text-sm text-slate-700 list-decimal list-inside">
+                  {topCourses.map((c) => (
+                    <li key={c.name}>{c.name} <span className="text-slate-400">· {c.n}</span></li>
+                  ))}
+                </ol>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+              <h3 className="font-bold text-slate-900">{t("dashboard.usage.title")}</h3>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-center">
+                <div className="rounded-xl bg-saffron-50 p-4">
+                  <div className="text-3xl font-extrabold text-slate-900">{langUse.voice}</div>
+                  <div className="text-xs text-slate-500 mt-1">🎙️ {t("dashboard.usage.voice")}</div>
+                </div>
+                <div className="rounded-xl bg-indigoink-50 p-4">
+                  <div className="text-3xl font-extrabold text-slate-900">{langUse.text}</div>
+                  <div className="text-xs text-slate-500 mt-1">💬 {t("dashboard.usage.text")}</div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -290,16 +443,20 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Table */}
+          {/* Pseudonymous beneficiary table (no names/phones in Supabase mode) */}
           <div className="mt-6 bg-white rounded-2xl border border-slate-100 card-shadow overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 text-sm">{t("dashboard.table.title")}</h3>
+              <span className="text-xs text-slate-400">{t("dashboard.table.piiNote")}</span>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50 text-left text-slate-500 text-xs uppercase tracking-wide">
-                    <th className="px-4 py-3 font-semibold">{t("dashboard.table.name")}</th>
+                    <th className="px-4 py-3 font-semibold">{t("dashboard.table.id")}</th>
                     <th className="px-4 py-3 font-semibold">{t("dashboard.table.work")}</th>
                     <th className="px-4 py-3 font-semibold">{t("dashboard.table.state")}</th>
-                    <th className="px-4 py-3 font-semibold">{t("dashboard.table.phone")}</th>
+                    <th className="px-4 py-3 font-semibold">{t("dashboard.table.edu")}</th>
                     <th className="px-4 py-3 font-semibold">{t("dashboard.table.status")}</th>
                   </tr>
                 </thead>
@@ -313,12 +470,16 @@ export default function Dashboard() {
                   )}
                   {bens.map((b, i) => {
                     const isEnrolled = enrolls.some((e) => e.beneficiary_id === b.id);
+                    const band =
+                      b.age < 18 ? "u18" : b.age < 25 ? "18-24" : b.age < 35 ? "25-34" : b.age < 50 ? "35-49" : "50+";
                     return (
                       <tr key={b.id ?? i} className="border-t border-slate-100 hover:bg-slate-50/60">
                         <td className="px-4 py-3">
-                          <span className="font-medium text-slate-900">{b.name}</span>
+                          <span className="font-mono text-xs text-slate-500">
+                            {(b.id ?? "—").slice(0, 8)}
+                          </span>
                           <span className="block text-xs text-slate-400">
-                            {b.age} · {b.gender}
+                            {band} · {b.gender}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-600">{tl(`liv.${b.work_type}`)}</td>
@@ -326,7 +487,7 @@ export default function Dashboard() {
                           {b.district}
                           <span className="block text-xs text-slate-400">{b.state}</span>
                         </td>
-                        <td className="px-4 py-3 text-slate-600 tabular-nums">{b.phone}</td>
+                        <td className="px-4 py-3 text-slate-600">{tl(`edu.${b.education}`)}</td>
                         <td className="px-4 py-3">
                           <span
                             className={`text-xs font-semibold rounded-full px-2.5 py-1 ${

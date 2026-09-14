@@ -19,7 +19,7 @@ export default function Home({ nav }: { nav: Nav }) {
         courses: courses.length,
         matches: Math.min(bens.length * 3, courses.length * bens.length),
       });
-    })().catch(() => {});
+    })().catch((e) => console.warn("[home] stats load failed", e));
   }, []);
 
   return (
