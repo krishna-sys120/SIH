@@ -1,5 +1,5 @@
 /// <reference types="vitest" />
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
@@ -8,11 +8,45 @@ import { VitePWA } from "vite-plugin-pwa";
 // Pages builds set GITHUB_PAGES=true; local builds/dev stay root-relative.
 const isPages = process.env.GITHUB_PAGES === "true";
 
+/**
+ * SEC-010: inject a strict Content-Security-Policy into the PRODUCTION build
+ * only (dev needs inline HMR scripts and websockets). GitHub Pages cannot set
+ * HTTP response headers, so the meta tag is the only delivery channel there.
+ * connect-src allows any *.supabase.co project (the URL is build-time env).
+ */
+function cspPlugin(): Plugin {
+  return {
+    name: "inject-csp",
+    apply: "build",
+    enforce: "post",
+    transformIndexHtml(html) {
+      const csp = [
+        "default-src 'none'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+        "manifest-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+        "frame-ancestors 'none'",
+      ].join("; ");
+      return html.replace(
+        /<head>/,
+        `<head>\n    <meta http-equiv="Content-Security-Policy" content="${csp}" />`,
+      );
+    },
+  };
+}
+
 export default defineConfig({
   base: isPages ? "/SIH/" : "/",
   plugins: [
     react(),
     tailwindcss(),
+    cspPlugin(),
     VitePWA({
       registerType: "prompt",
       includeAssets: ["favicon.svg"],

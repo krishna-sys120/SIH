@@ -8,6 +8,11 @@
       content="AI voice assistant for livelihood mapping and NSQF-aligned skilling recommendations for SC communities under the GIA component of PM-AJAY"
     />
     <meta name="theme-color" content="#2b4dc4" />
+    <!-- SEC-010: defense in depth. GitHub Pages cannot send HTTP headers, so a
+         Referrer-Policy meta is the only channel; frame protection and CSP for
+         production builds are injected in vite.config.ts (dev stays CSP-free
+         for HMR). -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>PM-AJAY GIA · Skilling Voice Assistant</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />

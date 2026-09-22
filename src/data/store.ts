@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import type { Beneficiary, Course } from "./model";
 import { COURSE_SEED } from "./courses";
 import { hasSupabase, supabase } from "./supabase";
@@ -5,6 +7,62 @@ import { addDemoBeneficiary, loadDemoBeneficiaries } from "./demo";
 import { flushOutbox, outboxCount, queueSubmission, type OutboxItem } from "./offline";
 
 export const usingSupabase = hasSupabase;
+
+/** localStorage keys that carry per-user state — cleared on sign-out (SEC-013). */
+const SESSION_KEYS = [
+  "skillsetu.lastId",
+  "skillsetu.lastProfile",
+  "skillsetu.draft",
+  "skillsetu.outbox",
+];
+
+/**
+ * Auth session hook (SEC-013): real Supabase Auth session with automatic
+ * token refresh. The Dashboard uses it to gate privileged actions (PII-safe
+ * CSV export) server-verified via RLS policies (is_staff/is_admin read
+ * app_metadata, which users cannot edit). Demo mode has no session by design.
+ */
+export function useSession(): { session: Session | null; loading: boolean } {
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(hasSupabase);
+  useEffect(() => {
+    if (!hasSupabase || !supabase) return;
+    let cancelled = false;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!cancelled) {
+        setSession(data.session);
+        setLoading(false);
+      }
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => {
+      if (!cancelled) setSession(s);
+    });
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+  return { session, loading };
+}
+
+/** Password sign-in for staff/admin (roles live in server-side app_metadata). */
+export async function signIn(email: string, password: string): Promise<void> {
+  if (!hasSupabase || !supabase) throw new Error("demo mode has no authentication");
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw new Error(error.message);
+}
+
+/** Sign out everywhere and scrub this browser's per-user local state. */
+export async function signOut(): Promise<void> {
+  if (hasSupabase && supabase) await supabase.auth.signOut();
+  for (const k of SESSION_KEYS) {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 /** One enrollment record — same shape in demo (localStorage) and Supabase. */
 export interface EnrollmentRow {

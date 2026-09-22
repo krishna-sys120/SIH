@@ -25,13 +25,12 @@ import {
   validateTwilioSignature,
   parseForm,
   normalizePhone,
-  xmlResponse,
-  jsonResponse,
   sendSms,
   sendWhatsApp,
 } from "../_shared/twilio.ts";
 import { classifyKeyword, keywordReply, detectLang } from "../_shared/keywords.ts";
 import { serviceClient } from "../_shared/db.ts";
+import { json, options, xmlResponse } from "../_shared/http.ts";
 import {
   ivrProcess,
   renderMenuGather,
@@ -47,9 +46,8 @@ const IVR_CONFIG = ivrConfigJson as unknown as IvrConfig;
 // Keyword classification lives in _shared/keywords.ts (pure, unit-tested).
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response(null, { status: 204 });
+  if (req.method === "OPTIONS") return options();
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
-
   const url = new URL(req.url);
   const type = url.searchParams.get("type") ?? "sms";
 
@@ -91,6 +89,18 @@ Deno.serve(async (req: Request) => {
     if (type === "sms" || type === "whatsapp") {
       const body = (params.Body ?? "").trim();
       const channel = type;
+
+      // SEC-005: inbound replay guard — Twilio can redeliver an inbound SMS on
+      // transient errors; without this, a retried delivery duplicates rows and
+      // doubles auto-reply sends. Keyed on the MessageSid, which Twilio
+      // guarantees unique per message.
+      const msgSid = params.SmsSid ?? params.MessageSid ?? "";
+      if (msgSid) {
+        const { error: dupErr } = await admin
+          .from("webhook_events")
+          .insert({ event_id: `${msgSid}:inbound:${type}`, kind: "inbound", payload: { sid: msgSid, channel: type } });
+        if (dupErr) return xmlResponse("<Response></Response>"); // already processed
+      }
 
       // Keyword handling first — STOP beats everything.
       const keyword = classifyKeyword(body);
@@ -177,7 +187,7 @@ Deno.serve(async (req: Request) => {
       const { error: evErr } = await admin
         .from("webhook_events")
         .insert({ event_id: eventId, kind: "status", payload: { sid, status } });
-      if (evErr) return jsonResponse({ ok: true, dedup: true }); // already processed
+      if (evErr) return json({ ok: true, dedup: true }); // already processed
 
       const commStatus = mapCommStatus(status);
       const lookupCol = params.MessageSid ? "twilio_sid" : "call_sid";

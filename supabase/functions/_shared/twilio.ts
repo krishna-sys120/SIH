@@ -191,6 +191,8 @@ export const hangup = () => "<Hangup/>";
 export const redirect = (url: string) => `<Redirect method="POST">${esc(url)}</Redirect>`;
 
 // ── Helpers ───────────────────────────────────────────────────
+// HTTP/CORS responses are owned by _shared/http.ts (SEC-002, single owner);
+// this module stays HTTP-free so unit tests can import it without a runtime.
 
 /** Normalize a phone to E.164-ish (+XXXXXXXXXX); accepts 10-digit Indian numbers. */
 export function normalizePhone(raw: string): string | null {
@@ -208,21 +210,4 @@ export async function parseForm(req: Request): Promise<Record<string, string>> {
   return Object.fromEntries(new URLSearchParams(text));
 }
 
-export const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
 
-export function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
-export function xmlResponse(xml: string): Response {
-  return new Response(xml, {
-    status: 200,
-    headers: { ...corsHeaders, "Content-Type": "text/xml; charset=utf-8" },
-  });
-}

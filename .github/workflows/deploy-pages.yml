@@ -5,6 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# SEC-004: least privilege — the workflow only needs to publish the Pages site.
 permissions:
   contents: read
   pages: write
@@ -18,8 +19,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # SEC-004: third-party/first-party actions are pinned to commit SHAs
+      # (tag references are mutable; a compromised tag could run arbitrary
+      # code in CI). persist-credentials: false stops the checkout action from
+      # leaving the GITHUB_TOKEN in .git/config for later steps.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -39,10 +46,10 @@ jobs:
       - name: SPA fallback
         run: cp dist/index.html dist/404.html
       - name: Enable and configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
         with:
           enablement: true
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: dist
 
@@ -54,4 +61,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

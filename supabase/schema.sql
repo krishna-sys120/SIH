@@ -121,16 +121,11 @@ create policy "own enrollments select" on public.enrollments
             where b.id = enrollments.beneficiary_id and b.user_id = auth.uid())
     or public.is_staff() or public.is_admin()
   );
-create policy "own enrollments update" on public.enrollments
-  for update to authenticated
-  using (
-    exists (select 1 from public.beneficiaries b
-            where b.id = enrollments.beneficiary_id and b.user_id = auth.uid())
-  )
-  with check (
-    exists (select 1 from public.beneficiaries b
-            where b.id = enrollments.beneficiary_id and b.user_id = auth.uid())
-  );
+-- SEC-007: NO update policy on enrollments — enrollment status ('enrolled',
+-- 'completed', 'dropped') is an authoritative program outcome. Even the row's
+-- owner must not be able to mark themselves 'completed' (data integrity), so
+-- status transitions happen through staff/admin processes only. Deleting an
+-- enrollment is likewise not permitted by policy.
 
 -- 4b. Registration RPC — the ONLY anonymous write path into beneficiaries.
 -- Security definer so the client never needs SELECT on the base table, and it
@@ -160,6 +155,60 @@ begin
   if (p->>'phone') !~ '^[6-9][0-9]{9}$' then raise exception 'invalid phone'; end if;
   if coalesce((p->>'age')::int, 0) not between 15 and 60 then raise exception 'invalid age'; end if;
 
+  -- Input validation (SEC-008/SEC-020): every free-form field is length-capped
+  -- and enumerated fields are allow-listed BEFORE touching the table.
+  if p->>'gender' is not null and p->>'gender' not in ('male','female','other') then
+    raise exception 'invalid gender';
+  end if;
+  if p->>'category' is not null and p->>'category' not in ('sc','st','obc','gen') then
+    raise exception 'invalid category';
+  end if;
+  if coalesce(length(p->>'state'), 0) = 0 or length(p->>'state') > 64 then
+    raise exception 'invalid state';
+  end if;
+  if coalesce(length(p->>'district'), 0) < 2 or length(p->>'district') > 64 then
+    raise exception 'invalid district';
+  end if;
+  if length(coalesce(p->>'skills', '')) > 300 or length(coalesce(p->>'interest', '')) > 300 then
+    raise exception 'skills/interest too long (max 300 chars each)';
+  end if;
+  if coalesce((p->>'income')::int, 0) < 0 or coalesce((p->>'income')::int, 0) > 10000000 then
+    raise exception 'invalid income';
+  end if;
+  if coalesce(p->>'work_type', '') = '' or length(p->>'work_type') > 64 then
+    raise exception 'invalid work_type';
+  end if;
+  if coalesce(pg_column_size(p->'profile'), 2) > 16384 then
+    raise exception 'profile too large (max 16KB)';
+  end if;
+
+  -- Duplicate phone: return the EXISTING id. (SEC-001: an anonymous caller can
+  -- no longer OVERWRITE someone else's profile by re-submitting the same
+  -- phone — only the record's authenticated owner (or staff/admin) may update
+  -- fields; everyone else gets the id back unchanged, leaking no PII.)
+  select id into v_id from public.beneficiaries where phone = p->>'phone';
+  if v_id is not null then
+    if auth.uid() is not null and (
+      exists (select 1 from public.beneficiaries b
+              where b.id = v_id and (b.user_id = auth.uid()
+                                     or public.is_staff() or public.is_admin()))
+    ) then
+      update public.beneficiaries
+         set name = p->>'name',
+             age = (p->>'age')::int,
+             gender = p->>'gender',
+             district = p->>'district',
+             work_type = p->>'work_type',
+             education = coalesce(p->>'education', 'secondary'),
+             skills = coalesce(p->>'skills', ''),
+             interest = coalesce(p->>'interest', ''),
+             profile = coalesce(p->'profile', '{}'::jsonb),
+             user_id = coalesce(user_id, auth.uid())
+       where id = v_id;
+    end if;
+    return v_id;
+  end if;
+
   insert into public.beneficiaries
     (name, age, gender, phone, state, district, category, income, work_type,
      education, skills, interest, consent_given, consent_timestamp,
@@ -170,17 +219,6 @@ begin
      coalesce(p->>'education', 'secondary'), coalesce(p->>'skills', ''), coalesce(p->>'interest', ''),
      true, now(), coalesce(p->>'consent_version', 'v1'),
      coalesce(p->'profile', '{}'::jsonb), auth.uid())
-  on conflict (phone) do update
-    set name = excluded.name,
-        age = excluded.age,
-        district = excluded.district,
-        work_type = excluded.work_type,
-        education = excluded.education,
-        skills = excluded.skills,
-        interest = excluded.interest,
-        profile = excluded.profile,
-        -- take ownership if the same person is now logged in
-        user_id = coalesce(public.beneficiaries.user_id, auth.uid())
   returning id into v_id;
   return v_id;
 end;
@@ -192,17 +230,21 @@ grant execute on function public.register_beneficiary(jsonb) to anon, authentica
 -- set at invite time by an administrator. Beneficiary = any other auth user.
 -- The is_staff()/is_admin() helpers are SECURITY DEFINER + STABLE so RLS can
 -- call them without recursive policy evaluation.
+-- SECURITY (SEC-019): roles are read from `app_metadata`, which ONLY the
+-- server (service role / dashboard) can modify. The old user_metadata source
+-- let any user set app_role=admin in their own browser profile and receive
+-- staff/admin row access.
 create or replace function public.is_staff()
 returns boolean
 language sql stable security definer set search_path = public as $$
   select coalesce(
-    (auth.jwt() -> 'user_metadata' ->> 'app_role') in ('staff','admin'), false);
+    (auth.jwt() -> 'app_metadata' ->> 'app_role') in ('staff','admin'), false);
 $$;
 
 create or replace function public.is_admin()
 returns boolean
 language sql stable security definer set search_path = public as $$
-  select coalesce((auth.jwt() -> 'user_metadata' ->> 'app_role') = 'admin', false);
+  select coalesce((auth.jwt() -> 'app_metadata' ->> 'app_role') = 'admin', false);
 $$;
 
 revoke all on function public.is_staff() from public, anon;
@@ -211,9 +253,11 @@ grant execute on function public.is_staff() to authenticated;
 grant execute on function public.is_admin() to authenticated;
 
 -- 4c-0b. PUBLIC_ANALYTICS_VIEW — aggregate-only, zero PII, safe for public
--- demo dashboards (counts and ratios only, no rows, no names/phones/ids).
+-- demo dashboards (7 global counters, no rows, no names/phones/ids, no
+-- district-level slices). security_invoker so RLS of the base tables applies.
 drop view if exists public.public_analytics_view;
-create view public.public_analytics_view as
+create view public.public_analytics_view
+with (security_invoker = true) as
 select
   (select count(*) from public.beneficiaries)                          as beneficiaries_total,
   (select count(*) from public.beneficiaries where gender = 'female')  as beneficiaries_female,
@@ -227,8 +271,10 @@ grant select on public.public_analytics_view to anon, authenticated;
 
 -- 4c-0c. AUTHORIZED_ADMIN_VIEW — row-level aggregates per district/sector for
 -- authenticated staff/admin only; still PII-free (no names/phones/ids).
+-- SEC-006: security_invoker + k-anonymity (small slices suppressed).
 drop view if exists public.authorized_admin_view;
-create view public.authorized_admin_view as
+create view public.authorized_admin_view
+with (security_invoker = true) as
 select
   b.state, b.district, b.gender, b.work_type, b.education,
   case when b.age < 18 then 'under-18'
@@ -239,8 +285,10 @@ select
   count(*) as beneficiaries,
   date_trunc('month', b.created_at) as cohort_month
 from public.beneficiaries b
-group by 1,2,3,4,5,6, date_trunc('month', b.created_at);
+group by 1,2,3,4,5,6, date_trunc('month', b.created_at)
+having count(*) >= 5;
 
+revoke all on public.authorized_admin_view from public, anon;
 grant select on public.authorized_admin_view to authenticated;
 
 -- 4c. PII-free directory for the admin dashboard: aggregates only — no names,
@@ -271,7 +319,41 @@ select
   to_char(date_trunc('month', b.created_at), 'YYYY-MM') as created_month
 from public.beneficiaries b;
 
-grant select on public.beneficiary_directory to anon, authenticated;
+-- SEC-006: staff/admin only, security_invoker (RLS of underlying tables
+-- applies), and k-anonymity — district/gender/education slices with fewer
+-- than 5 beneficiaries are suppressed so public aggregate data cannot be
+-- reverse-engineered into individual records.
+drop view if exists public.beneficiary_directory;
+create view public.beneficiary_directory
+with (security_invoker = true) as
+select
+  b.id,
+  ''                             as name,
+  null::int                      as age,
+  b.gender,
+  '—'                            as phone,
+  b.state,
+  b.district,
+  b.category,
+  0                              as income,
+  b.work_type,
+  b.education,
+  ''                             as skills,
+  ''                             as interest,
+  date_trunc('month', b.created_at) as created_at,
+  case
+    when b.age < 18 then 'under-18'
+    when b.age < 25 then '18-24'
+    when b.age < 35 then '25-34'
+    when b.age < 50 then '35-49'
+    else '50+'
+  end                            as age_band,
+  to_char(date_trunc('month', b.created_at), 'YYYY-MM') as created_month,
+  count(*) over (partition by b.district, b.gender, date_trunc('month', b.created_at)) as slice_count
+from public.beneficiaries b;
+
+revoke all on public.beneficiary_directory from public, anon;
+grant select on public.beneficiary_directory to authenticated;
 
 -- 5. Transactional enrollment RPC (Phase 2/15) — replaces the old
 -- client-side insert + separate decrement_seats() pair, which was neither

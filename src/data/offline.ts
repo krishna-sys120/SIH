@@ -14,6 +14,9 @@ import type { Beneficiary } from "./model";
 const DRAFT_KEY = "skillsetu.draft";
 const OUTBOX_KEY = "skillsetu.outbox";
 
+/** SEC-014: queued submissions expire — stale consent/profiles must not sync weeks later. */
+const OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 export interface OutboxItem {
   id: string;
   kind: "beneficiary";
@@ -48,7 +51,10 @@ export function clearDraft(): void {
 
 function readOutbox(): OutboxItem[] {
   try {
-    return JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? "[]") as OutboxItem[];
+    const all = JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? "[]") as OutboxItem[];
+    const fresh = all.filter((i) => Date.now() - Date.parse(i.queuedAt) < OUTBOX_TTL_MS);
+    if (fresh.length !== all.length) writeOutbox(fresh); // prune expired
+    return fresh;
   } catch {
     return [];
   }
@@ -66,7 +72,10 @@ export function queueSubmission(kind: "beneficiary", payload: Beneficiary): stri
   const item: OutboxItem = {
     id: crypto.randomUUID(),
     kind,
-    payload,
+    // SEC-014 data minimization: the server stamps consent time on receipt
+    // (schema sets consent_timestamp = now()); the client copy is stripped so
+    // a back-dated claim can never travel with the offline payload.
+    payload: { ...payload, consent_timestamp: undefined },
     queuedAt: new Date().toISOString(),
   };
   const list = readOutbox();

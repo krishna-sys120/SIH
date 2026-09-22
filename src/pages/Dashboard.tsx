@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useI18n } from "../i18n/context";
 import {
   fetchBeneficiaries,
   fetchCourses,
   listEnrollments,
   usingSupabase,
+  useSession,
+  signIn,
+  signOut,
 } from "../data/store";
 import { useComms, type CommRow } from "../data/comms";
 import type { Beneficiary, Course } from "../data/model";
@@ -23,6 +26,43 @@ interface EnrollRow {
  */
 export default function Dashboard() {
   const { t, tl, lang } = useI18n();
+  // SEC-013/SEC-031: privileged actions (the pseudonymous CSV export) require a
+  // signed-in session; server-side authorization is enforced by RLS policies
+  // (is_staff/is_admin read app_metadata, which users cannot edit). In demo
+  // mode there is no session — the export button is hidden and a demo note shows.
+  const { session } = useSession();
+  const canExport = usingSupabase && session !== null;
+  // SEC-013 sign-in surface: staff/admin authenticate here. Roles live in
+  // server-side app_metadata — signing in only ever grants what RLS policies
+  // verify against the verified JWT, never a client-controlled flag.
+  const [signingIn, setSigningIn] = useState(false);
+  const [authErr, setAuthErr] = useState<string | null>(null);
+  async function handleSignIn(ev: FormEvent<HTMLFormElement>) {
+    ev.preventDefault();
+    const fd = new FormData(ev.currentTarget);
+    const email = String(fd.get("email") ?? "").trim();
+    const password = String(fd.get("password") ?? "");
+    if (!email || !password) return;
+    setSigningIn(true);
+    setAuthErr(null);
+    try {
+      await signIn(email, password);
+      setSigningIn(false);
+    } catch (e) {
+      // Safe allowlist: never render raw backend messages (SEC-015).
+      const raw = e instanceof Error ? e.message : String(e);
+      setAuthErr(
+        /invalid login|invalid credentials|email not confirmed/i.test(raw)
+          ? t("auth.invalidCredentials")
+          : /rate|too many/i.test(raw)
+            ? t("auth.rateLimited")
+            : /failed to fetch|network/i.test(raw)
+              ? t("common.error")
+              : t("auth.invalidCredentials"),
+      );
+      setSigningIn(false);
+    }
+  }
   const [bens, setBens] = useState<Beneficiary[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [enrolls, setEnrolls] = useState<EnrollRow[]>([]);
@@ -201,18 +241,61 @@ export default function Dashboard() {
             <span className={`w-2 h-2 rounded-full ${usingSupabase ? "bg-leaf-500" : "bg-amber-500"}`} />
             {usingSupabase ? t("dashboard.conn.supabase") : t("dashboard.conn.demo")}
           </span>
+          {usingSupabase && session && (
+            <span className="inline-flex items-center gap-2 text-xs text-slate-500">
+              {t("auth.signedInAs")} {session.user.email ?? session.user.id.slice(0, 8)}
+              <button
+                onClick={() => void signOut()}
+                className="px-2.5 py-1 rounded-md border border-slate-200 bg-white font-medium text-slate-600 hover:bg-slate-50"
+              >
+                {t("auth.signOut")}
+              </button>
+            </span>
+          )}
+          {usingSupabase && !session && (
+            <form onSubmit={handleSignIn} className="flex flex-wrap items-center gap-2">
+              <input
+                name="email"
+                type="email"
+                required
+                autoComplete="username"
+                placeholder="email"
+                aria-label="email"
+                className="w-44 px-2.5 py-1.5 rounded-md border border-slate-200 text-xs focus:ring-2 focus:ring-indigoink-500 outline-none"
+              />
+              <input
+                name="password"
+                type="password"
+                required
+                autoComplete="current-password"
+                placeholder="password"
+                aria-label="password"
+                className="w-36 px-2.5 py-1.5 rounded-md border border-slate-200 text-xs focus:ring-2 focus:ring-indigoink-500 outline-none"
+              />
+              <button
+                type="submit"
+                disabled={signingIn}
+                className="px-3 py-1.5 rounded-md bg-indigoink-600 text-white text-xs font-medium hover:bg-indigoink-700 disabled:opacity-50"
+              >
+                {t("auth.signIn")}
+              </button>
+            </form>
+          )}
+          {authErr && <span className="text-xs text-rose-600 font-medium">{authErr}</span>}
           <button
             onClick={load}
             className="px-3.5 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             ⟳ {t("dashboard.refresh")}
           </button>
-          <button
-            onClick={exportCsv}
-            className="px-3.5 py-2 rounded-lg bg-indigoink-600 text-white text-sm font-medium hover:bg-indigoink-700"
-          >
-            ⬇ {t("dashboard.export")}
-          </button>
+          {canExport && (
+            <button
+              onClick={exportCsv}
+              className="px-3.5 py-2 rounded-lg bg-indigoink-600 text-white text-sm font-medium hover:bg-indigoink-700"
+            >
+              ⬇ {t("dashboard.export")}
+            </button>
+          )}
         </div>
       </div>
 

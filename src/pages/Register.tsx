@@ -15,6 +15,26 @@ import {
 import { translateDynamic } from "../i18n/labels";
 import type { LivelihoodProfile } from "../../supabase/functions/_shared/extract";
 
+/**
+ * SEC-015 allowlist: server validation failures map to user-safe text. Only
+ * these patterns ever reach the UI — backend strings are never rendered raw.
+ * Module-level constant, shared by handleSubmit.
+ */
+const SAFE_ERRORS: Array<[RegExp, string]> = [
+  [/consent/i, "consent is required before registering"],
+  [/invalid name|name too long/i, "name must be 2–80 characters"],
+  [/invalid phone|duplicate/i, "phone must be a valid 10-digit mobile number"],
+  [/invalid age/i, "age must be between 15 and 60"],
+  [/invalid gender/i, "please pick a gender"],
+  [/invalid category/i, "please pick a category"],
+  [/invalid state|invalid district/i, "please pick a valid state and district"],
+  [/skills\/interest/i, "skills and interest are limited to 300 characters"],
+  [/invalid income/i, "income must be a positive number"],
+  [/invalid work_type/i, "please pick your current work"],
+  [/profile too large/i, "interview profile too large to save"],
+  [/failed to fetch|network|offline/i, "network problem — your draft is saved and will sync when online"],
+];
+
 const STATES = [
   "Andhra Pradesh",
   "Bihar",
@@ -104,6 +124,11 @@ export default function Register({ nav }: { nav: Nav }) {
     setSaving(true);
     setError(false);
     setErrorMsg(null);
+
+    const safeError = (raw: string): string | null => {
+      const hit = SAFE_ERRORS.find(([re]) => re.test(raw));
+      return hit ? hit[1]! : null;
+    };
     const ben: Beneficiary = {
       name: form.name.trim(),
       age: Number(form.age),
@@ -146,8 +171,10 @@ export default function Register({ nav }: { nav: Nav }) {
       });
     } catch (e) {
       setError(true);
-      setErrorMsg(e instanceof Error ? e.message : null);
-      console.warn("[register] save failed", e);
+      const raw = e instanceof Error ? e.message : String(e);
+      setErrorMsg(safeError(raw));
+      // Full detail goes to the console log for support — never into the DOM.
+      console.warn("[register] save failed", raw);
     } finally {
       setSaving(false);
     }
@@ -387,6 +414,8 @@ export default function Register({ nav }: { nav: Nav }) {
       {error && (
         <p className="mt-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm px-4 py-3">
           {t("register.error")}
+          {/* SEC-015: show only allow-listed validation messages — raw Postgres
+              error text is never rendered to the user. */}
           {errorMsg ? ` — ${errorMsg}` : ""}{" "}
           <button onClick={handleSubmit} className="underline font-medium">
             {t("common.retry")}

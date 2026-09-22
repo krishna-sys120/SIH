@@ -78,7 +78,10 @@ Supabase env vars are set — every demo surface is explicitly labeled.
 pseudonymous directory, anon can only register via `register_beneficiary()` (consent
 mandatory) — anonymous **enrollment inserts are removed**; enrollment goes through the
 transactional RPC only. Aggregate views (`public_analytics_view`,
-`authorized_admin_view`) expose counts, never PII.
+`authorized_admin_view`) expose counts, never PII. Staff/admin authenticate on the
+Dashboard (roles live in server-side `app_metadata`, never client-editable); the CSV
+export requires a signed-in session. Full audit with threat model, per-finding evidence,
+regression tests, and honest external dependencies: **[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md)**.
 
 ## 📲 Install as an app (PWA)
 
