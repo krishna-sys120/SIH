@@ -18,6 +18,7 @@ import { recommendOpportunities, entrepreneurPaths } from "../../supabase/functi
 import { rankRoles } from "../../supabase/functions/_shared/skillgap";
 import { SKILLS, JOB_ROLES } from "../../supabase/functions/_shared/taxonomy";
 import { useOnline } from "../data/offline";
+import { fetchNqrRecommendations, type NqrResult } from "../data/nqr";
 
 /**
  * Voice-first adaptive livelihood interview (Phase 4/6/20). One question at a
@@ -68,6 +69,26 @@ export default function Assistant({ nav }: { nav: Nav }) {
 
   const profile = interview.profile;
   const done = interview.state === "ready" && profile;
+
+  // Official NQR recommendations (NQR integration): fetched once the
+  // interview completes. The prototype pipeline below is untouched and keeps
+  // working whether or not official data is available (Phase 24 fallback).
+  const [nqr, setNqr] = useState<NqrResult | null>(null);
+  useEffect(() => {
+    if (!done || !profile) return;
+    let cancelled = false;
+    fetchNqrRecommendations(profile, 4)
+      .then((r) => {
+        if (!cancelled) setNqr(r);
+      })
+      .catch((e) => {
+        console.warn("[assistant] nqr load failed", e);
+        if (!cancelled) setNqr({ matches: [], source: "none", meta: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [done, profile]);
 
   const ranked = useMemo(() => (profile ? rankRoles(profile, 3) : []), [profile]);
   const matches = useMemo(
@@ -356,6 +377,73 @@ export default function Assistant({ nav }: { nav: Nav }) {
               ))}
             </div>
           </section>
+
+          {/* Official NQR qualifications (NQR integration — Phase 14/15).
+              Only OFFICIAL_ACTIVE records reach this list; ineligible ones
+              render as an explicit pathway note, never a direct option. */}
+          {nqr && nqr.matches.length > 0 && (
+            <section className="bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+              <h2 className="font-bold text-slate-900 text-lg">🏅 {t("nqr.sectionTitle")}</h2>
+              <div className="mt-3 space-y-3">
+                {nqr.matches.map((m) => (
+                  <div
+                    key={m.qualification.code}
+                    className="rounded-xl border border-leaf-500/25 bg-leaf-500/5 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-bold text-slate-900 leading-snug">{m.qualification.title}</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {m.qualification.level_display} · {m.qualification.sector_official}
+                          {m.qualification.hours_max !== null
+                            ? ` · ${m.qualification.hours_max} ${t("nqr.hours")}`
+                            : ""}
+                          {m.qualification.awarding_body
+                            ? ` · ${t("nqr.awardingBody")}: ${m.qualification.awarding_body}`
+                            : ""}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-semibold text-leaf-700 bg-leaf-500/10 rounded-full px-2.5 py-1">
+                        {t("nqr.badgeOfficial")}
+                      </span>
+                    </div>
+                    {m.qualification.valid_till && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        {tl("nqr.validTill", { date: m.qualification.valid_till })}
+                      </p>
+                    )}
+                    {m.reasons.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs font-semibold text-slate-500 uppercase">{t("result.why")}</p>
+                        <ul className="mt-1 space-y-1 text-sm text-slate-700">
+                          {m.reasons.map((r, i) => (
+                            <li key={i}>✓ {tl(`nqr.reason.${r.id}`, r.vars)}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {m.pathway && (
+                      <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        ⚠ {tl("nqr.pathwayNote", { required: m.pathway.required })}
+                      </p>
+                    )}
+                    <a
+                      href={m.qualification.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block text-xs font-medium text-indigoink-700 underline underline-offset-2"
+                    >
+                      {t("nqr.viewOfficial")} ↗
+                    </a>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-xs text-slate-400">
+                {t("nqr.sourceLine")}
+                {nqr.source === "static_snapshot" && ` — ${t("nqr.snapshotNote")}`}
+              </p>
+            </section>
+          )}
 
           {/* Top recommendations with WHY */}
           <section className="bg-white rounded-2xl border border-slate-100 card-shadow p-5">

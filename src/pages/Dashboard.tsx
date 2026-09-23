@@ -10,6 +10,8 @@ import {
   signOut,
 } from "../data/store";
 import { useComms, type CommRow } from "../data/comms";
+import { supabase } from "../data/supabase";
+import type { NqrAdminSummary } from "../data/nqrAdmin";
 import type { Beneficiary, Course } from "../data/model";
 
 interface EnrollRow {
@@ -69,6 +71,26 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(false);
   const comms = useComms();
+  // Admin NQR summary (Phase 16): aggregate counters via the admin-only RPC.
+  // Null in demo mode or when the caller is not admin (server-enforced).
+  const [nqrAdmin, setNqrAdmin] = useState<NqrAdminSummary | null>(null);
+  useEffect(() => {
+    if (!usingSupabase || !session) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await supabase!.rpc("nqr_admin_summary");
+        const data = res.data as NqrAdminSummary | null;
+        const error = res.error as { message: string } | null;
+        if (!cancelled && !error && data) setNqrAdmin(data);
+      } catch {
+        /* non-admin callers get no data — the card shows the empty note */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -523,6 +545,44 @@ export default function Dashboard() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+
+          {/* Official NQR data card (admin view — Phase 16). Reads the
+              anonymized public view; the nqr_admin_summary() RPC is
+              admin-only (app_metadata role, server-enforced). */}
+          <div className="mt-6 bg-white rounded-2xl border border-slate-100 card-shadow p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-900 text-sm">{t("dashboard.nqr.title")}</h3>
+              <span className="text-xs text-slate-400">{t("nqr.sourceLine")}</span>
+            </div>
+            {nqrAdmin ? (
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xl font-extrabold text-slate-900">{nqrAdmin.total}</p>
+                  <p className="text-xs text-slate-500">{t("dashboard.nqr.total")}</p>
+                </div>
+                <div className="rounded-xl bg-leaf-500/10 p-3">
+                  <p className="text-xl font-extrabold text-leaf-600">{nqrAdmin.active}</p>
+                  <p className="text-xs text-slate-500">{t("dashboard.nqr.active")}</p>
+                </div>
+                <div className="rounded-xl bg-amber-50 p-3">
+                  <p className="text-xl font-extrabold text-amber-700">
+                    {(nqrAdmin.expired ?? 0) + (nqrAdmin.archived ?? 0)}
+                  </p>
+                  <p className="text-xs text-slate-500">{t("dashboard.nqr.historical")}</p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-sm font-semibold text-slate-700">
+                    {nqrAdmin.last_verified
+                      ? new Date(nqrAdmin.last_verified).toLocaleDateString()
+                      : "—"}
+                  </p>
+                  <p className="text-xs text-slate-500">{t("nqr.lastVerified")}</p>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-slate-500">{t("dashboard.nqr.none")}</p>
             )}
           </div>
 

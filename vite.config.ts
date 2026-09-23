@@ -49,7 +49,7 @@ export default defineConfig({
     cspPlugin(),
     VitePWA({
       registerType: "prompt",
-      includeAssets: ["favicon.svg"],
+      includeAssets: ["favicon.svg", "nqr/official-active.json"],
       manifest: {
         name: "SkillSetu — PM-AJAY GIA Skilling Voice Assistant",
         short_name: "SkillSetu",

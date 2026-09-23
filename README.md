@@ -83,6 +83,39 @@ Dashboard (roles live in server-side `app_metadata`, never client-editable); the
 export requires a signed-in session. Full audit with threat model, per-finding evidence,
 regression tests, and honest external dependencies: **[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md)**.
 
+## 🏛 Official NQR / NSQF qualification data
+
+The app now carries **two clearly separated data layers**:
+
+| Layer | Badge | Source |
+| --- | --- | --- |
+| Official qualifications | **✓ Official NQR Qualification** | National Qualification Register (NCVET, [nqr.gov.in](https://www.nqr.gov.in)) — imported via the official structured export |
+| Prototype mapping | ⚠ *Prototype mapping* | The original demo catalog, kept as an honest fallback |
+
+The importer (`scripts/nqr-import.mjs`) validates every record (title, official
+code, NSQF level incl. half-levels, notional hours, validity dates), writes an
+auditable error report, never invents fields the official export lacks, and
+marks each record `OFFICIAL_ACTIVE` / `OFFICIAL_EXPIRED` / `OFFICIAL_ARCHIVED` /
+`OFFICIAL_UNCERTAIN`. **Only currently-valid (`OFFICIAL_ACTIVE`) records are
+recommended**; expired/archived data is never shown as a current option, and
+education-ineligible records appear only as explicit "complete Class 12 first"
+pathway notes. Matching is fully explainable (livelihood / skills / occupation /
+duration / entry-level reasons, rendered in the beneficiary's language).
+
+```bash
+# Refresh official data (admin, server-side; service-role env required for --db)
+node scripts/nqr-import.mjs --fetch --db        # or --file <official-export.xlsx>
+node scripts/nqr-import.mjs --file export.xlsx --curated public/nqr/official-active.json
+```
+
+Last import: **2814 official records → 2804 valid, 10 rejected with logged
+validation findings, 1934 active, 880 expired; 1052 active records in the
+app's sectors shipped as the browser snapshot.** Schema:
+[`supabase/nqr-migration.sql`](supabase/nqr-migration.sql) (RLS deny-by-default,
+service-role-only writes, admin summary RPC). Full architecture, provenance
+model, sync procedure, and honest limitations:
+**[`docs/NQR_INTEGRATION.md`](docs/NQR_INTEGRATION.md)**.
+
 ## 📲 Install as an app (PWA)
 
 **Live app:** <https://krishna-sys120.github.io/SIH/>
