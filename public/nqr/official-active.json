@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-09-23T16:39:09.368Z",
+ "generated_at": "2026-09-23T17:27:09.239Z",
  "source": "NCVET_NQR",
  "source_note": "Official qualification data from the National Qualification Register (nqr.gov.in), NCVET. Only OFFICIAL_ACTIVE records with a current valid_till date are included.",
  "count": 1052,
@@ -4731,7 +4731,7 @@
   },
   {
    "code": "QG-05-EH-02592-2024-V1-NIELIT",
-   "title": "Embedded System Developer (A-Level &#039;Embedded System Design’)",
+   "title": "Embedded System Developer (A-Level 'Embedded System Design’)",
    "sector": "electronics",
    "sector_official": "Electronics & HW",
    "level_display": "Level 5",
@@ -4742,7 +4742,7 @@
    "awarding_body": "National Institute of Electronics and Information Technology (NIELIT)",
    "occupation": "Embedded System Design",
    "source_url": "https://www.nqr.gov.in/qualifications/12095",
-   "raw_source_hash": "4fff80b3"
+   "raw_source_hash": "0c50f510"
   },
   {
    "code": "NM-03-IT-02680-2024-V1-HCL",
@@ -4986,7 +4986,7 @@
   },
   {
    "code": "QG-04-EH-02591-2024-V1-NIELIT",
-   "title": "Embedded System Junior Developer (O-Level &#039;Embedded System Design’)",
+   "title": "Embedded System Junior Developer (O-Level 'Embedded System Design’)",
    "sector": "electronics",
    "sector_official": "Electronics & HW",
    "level_display": "Level 4",
@@ -4997,7 +4997,7 @@
    "awarding_body": "National Institute of Electronics and Information Technology (NIELIT)",
    "occupation": "Embedded System Design",
    "source_url": "https://www.nqr.gov.in/qualifications/12125",
-   "raw_source_hash": "f418ce9f"
+   "raw_source_hash": "0b212692"
   },
   {
    "code": "NG-04-EH-02979-2024-V1-ESSC",
@@ -5241,7 +5241,7 @@
   },
   {
    "code": "QG-05-EH-02594-2024-V1-NIELIT",
-   "title": "Junior Chip Designer (A-Level &#039;Chip Design&#039;)",
+   "title": "Junior Chip Designer (A-Level 'Chip Design')",
    "sector": "electronics",
    "sector_official": "Electronics & HW",
    "level_display": "Level 5",
@@ -5252,7 +5252,7 @@
    "awarding_body": "National Institute of Electronics and Information Technology (NIELIT)",
    "occupation": "VLSI Design",
    "source_url": "https://www.nqr.gov.in/qualifications/12153",
-   "raw_source_hash": "73c7824c"
+   "raw_source_hash": "11807d54"
   },
   {
    "code": "QG-2.5-AU-02944-2024-V2-ASDC",
@@ -7724,7 +7724,7 @@
    "hours_max": 720,
    "hours_min": 510,
    "valid_till": "2027-10-22",
-   "awarding_body": "Indian Jute Industries&#039; Research Association (IJIRA)",
+   "awarding_body": "Indian Jute Industries' Research Association (IJIRA)",
    "occupation": "Production",
    "source_url": "https://www.nqr.gov.in/qualifications/12925",
    "raw_source_hash": "32b3d277"
@@ -7739,7 +7739,7 @@
    "hours_max": 480,
    "hours_min": 480,
    "valid_till": "2027-10-22",
-   "awarding_body": "Indian Jute Industries&#039; Research Association (IJIRA)",
+   "awarding_body": "Indian Jute Industries' Research Association (IJIRA)",
    "occupation": "Quality Control",
    "source_url": "https://www.nqr.gov.in/qualifications/12928",
    "raw_source_hash": "19f07e4f"
@@ -7754,7 +7754,7 @@
    "hours_max": 720,
    "hours_min": 510,
    "valid_till": "2027-10-22",
-   "awarding_body": "Indian Jute Industries&#039; Research Association (IJIRA)",
+   "awarding_body": "Indian Jute Industries' Research Association (IJIRA)",
    "occupation": "Machine Maintenance",
    "source_url": "https://www.nqr.gov.in/qualifications/12931",
    "raw_source_hash": "7226e24c"
@@ -7769,7 +7769,7 @@
    "hours_max": 300,
    "hours_min": 300,
    "valid_till": "2027-01-31",
-   "awarding_body": "Indian Jute Industries&#039; Research Association (IJIRA)",
+   "awarding_body": "Indian Jute Industries' Research Association (IJIRA)",
    "occupation": "Weaving",
    "source_url": "https://www.nqr.gov.in/qualifications/12932",
    "raw_source_hash": "27221a70"
@@ -8324,7 +8324,7 @@
    "hours_max": 300,
    "hours_min": 300,
    "valid_till": "2028-02-18",
-   "awarding_body": "Indian Jute Industries&#039; Research Association (IJIRA)",
+   "awarding_body": "Indian Jute Industries' Research Association (IJIRA)",
    "occupation": "Production (Geotextile)",
    "source_url": "https://www.nqr.gov.in/qualifications/13135",
    "raw_source_hash": "5bc2a940"
@@ -8369,7 +8369,7 @@
    "hours_max": 120,
    "hours_min": 120,
    "valid_till": "2028-02-18",
-   "awarding_body": "Indian Jute Industries&#039; Research Association (IJIRA)",
+   "awarding_body": "Indian Jute Industries' Research Association (IJIRA)",
    "occupation": "Manufacturing and Application of Geotextile",
    "source_url": "https://www.nqr.gov.in/qualifications/13179",
    "raw_source_hash": "58b4e19b"
@@ -15681,7 +15681,7 @@
   },
   {
    "code": "NG-04-HE-045252025-V1-HSSC",
-   "title": "Alzheimer&#039;s and Dementia Care- Fundamentals",
+   "title": "Alzheimer's and Dementia Care- Fundamentals",
    "sector": "healthcare",
    "sector_official": "Healthcare",
    "level_display": "Level 4",
@@ -15692,7 +15692,7 @@
    "awarding_body": "Healthcare Sector Skill Council (HSSC)",
    "occupation": "Special care Services",
    "source_url": "https://www.nqr.gov.in/qualifications/14928",
-   "raw_source_hash": "be0f2f15"
+   "raw_source_hash": "8ad92caa"
   },
   {
    "code": "QG-04-HE-045242025-V1-HSSC>QG-04-HE-045242025-V1-HSSC",

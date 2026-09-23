@@ -157,6 +157,7 @@ export function cleanText(raw) {
   return String(raw ?? "")
     .replace(/\uFB01/g, "fi")
     .replace(/\uFB02/g, "fl")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))) // e.g. &#039; → '
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")

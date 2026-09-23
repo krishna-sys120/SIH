@@ -286,6 +286,13 @@ describe("NQR snapshot integrity (committed official data)", () => {
     }
   });
 
+  it("no HTML entities survive into displayed fields", () => {
+    for (const r of snapshot.records) {
+      const display = `${r.title} ${r.awarding_body ?? ""} ${r.occupation ?? ""}`;
+      expect(display).not.toMatch(/&#|&amp;|&quot;|&lt;/);
+    }
+  });
+
   it("curated subset stays within one official sector vocabulary", () => {
     const sectors = new Set(snapshot.records.map((r) => r.sector_official));
     for (const s of sectors) {
@@ -372,6 +379,8 @@ describe("NQR regression — existing pipeline still works", () => {
     expect(contentHash("abc")).toBe(contentHash("abc"));
     expect(contentHash("abc")).not.toBe(contentHash("abd"));
     expect(cleanText("A&amp;B\uFB01x")).toBe("A&Bfix");
+    // Numeric HTML entities survive in the official export (e.g. &#039;).
+    expect(cleanText("Industries&#039; Research &amp; Dev")).toBe("Industries' Research & Dev");
     expect(parseSharedStrings("<si><t>Hello</t></si>")).toEqual(["Hello"]);
   });
 
